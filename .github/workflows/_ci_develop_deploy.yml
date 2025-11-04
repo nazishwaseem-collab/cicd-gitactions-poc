@@ -1,0 +1,431 @@
+name: CI - Develop Features & Deploy to Dev
+
+on:
+  push:
+    branches:
+      - 'develop'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  JAVA_VERSION: '17'
+  TARGET_ENV: 'DEV'
+  ANYPOINT_ENV: 'Development'
+
+jobs:
+  ci_build_test_deploy_dev:
+    name: CI Build, Test & Deploy to Development
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
+
+      # Retrieve secrets from GitHub Secrets (Environment-specific)
+      - name: Load Environment Secrets
+        run: |
+          echo "Loading DEV secrets from GitHub Secrets..."
+          
+          # Export to environment for Maven
+          echo "ORG_ID=${{ secrets.ORG_ID }}" >> $GITHUB_ENV
+          echo "CONNECTED_APP_CLIENT_ID=${{ secrets.CONNECTED_APP_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "CONNECTED_APP_CLIENT_SECRET=${{ secrets.CONNECTED_APP_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "ANYPOINT_PLATFORM_CLIENT_ID=${{ secrets.ANYPOINT_PLATFORM__CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ANYPOINT_PLATFORM_CLIENT_SECRET=${{ secrets.ANYPOINT_PLATFORM_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "DECRYPTION_KEY=${{ secrets.DECRYPTION_KEY }}" >> $GITHUB_ENV
+          echo "NEXUS_USERNAME=${{ secrets.NEXUS_USERNAME }}" >> $GITHUB_ENV
+          echo "NEXUS_PASSWORD=${{ secrets.NEXUS_PASSWORD }}" >> $GITHUB_ENV
+
+      # Set unique SNAPSHOT version for development
+      - name: Set CI version (SNAPSHOT with build number)
+        run: |
+          BASE_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          BASE_VERSION=$(echo "$BASE_VERSION" | sed 's/-SNAPSHOT//' | sed 's/-[0-9]*$//')
+          NEW_VERSION="${BASE_VERSION}-${GITHUB_RUN_NUMBER}-SNAPSHOT"
+          mvn -B versions:set -DnewVersion="${NEW_VERSION}" -DgenerateBackupPoms=false -DprocessDependencies=false
+          echo "NEW_VERSION=${NEW_VERSION}" >> $GITHUB_ENV
+          echo "Using version: ${NEW_VERSION}"
+
+      # Install Python and dependencies for generic encryption
+      - name: Setup Python for Generic Property Encryption
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Required Python Packages
+        run: |
+          pip install pyyaml pycryptodome requests
+          echo "Python packages installed"
+
+      # Install Mule Secure Properties Tool
+      - name: Download Mule Secure Properties Tool
+        run: |
+          echo "Downloading Mule Secure Properties Tool..."
+          mkdir -p /tmp/mule-tools
+          cd /tmp/mule-tools
+          
+          # Download the Mule Secure Properties CLI tool
+          wget -q https://docs.mulesoft.com/downloads/mule-runtime/4.4/secure-properties-tool.jar -O secure-properties-tool.jar
+          
+          if [ ! -f "secure-properties-tool.jar" ]; then
+            echo "Failed to download secure-properties-tool.jar"
+            exit 1
+          fi
+          
+          echo "SECURE_TOOL_PATH=/tmp/mule-tools/secure-properties-tool.jar" >> $GITHUB_ENV
+          echo "Mule Secure Properties Tool downloaded successfully"
+
+      # Generic Encryption - Automatically detects and encrypts all secret properties
+      - name: Encrypt All Secure Properties (Generic)
+        run: |
+          python3 << 'ENCRYPT_SCRIPT'
+          import yaml
+          import os
+          import sys
+          import subprocess
+          import json
+          from pathlib import Path
+          
+          def log_info(msg):
+              print(f" {msg}")
+          
+          def log_success(msg):
+              print(f" {msg}")
+          
+          def log_error(msg):
+              print(f" {msg}", file=sys.stderr)
+          
+          def log_warn(msg):
+              print(f"  {msg}")
+          
+          def encrypt_with_mule_tool(plaintext, key, tool_path):
+              """Encrypt a value using Mule Secure Properties Tool"""
+              try:
+                  result = subprocess.run(
+                      ['java', '-cp', tool_path,
+                       'com.mulesoft.modules.security.util.SecurePropertiesTool',
+                       'string', 'encrypt', 'Blowfish', 'CBC', plaintext, key],
+                      capture_output=True,
+                      text=True,
+                      check=True,
+                      timeout=30
+                  )
+                  
+                  encrypted = result.stdout.strip()
+                  if not encrypted:
+                      log_error("Encryption returned empty result")
+                      return None
+                  
+                  return encrypted
+                  
+              except subprocess.TimeoutExpired:
+                  log_error("Encryption timeout - process took too long")
+                  return None
+              except subprocess.CalledProcessError as e:
+                  log_error(f"Encryption failed: {e.stderr}")
+                  return None
+              except Exception as e:
+                  log_error(f"Unexpected error during encryption: {str(e)}")
+                  return None
+          
+          def find_and_encrypt_secrets(data, path="", secrets_dict=None, decryption_key=None, tool_path=None, encrypted_count=[0]):
+              """
+              Recursively traverse YAML structure and encrypt all properties ending with 
+              specific patterns (host, port, password, username, key, secret, token, etc.)
+              """
+              if secrets_dict is None:
+                  secrets_dict = {}
+              
+              if isinstance(data, dict):
+                  for key, value in data.items():
+                      current_path = f"{path}.{key}" if path else key
+                      
+                      # Check if this is a leaf node (string value)
+                      if isinstance(value, str):
+                          # Determine if this property should be encrypted
+                          # Look for common secret property patterns
+                          secret_patterns = ['host', 'port', 'password', 'username', 'user', 
+                                           'secret', 'key', 'token', 'credential', 'pwd']
+                          
+                          should_encrypt = any(pattern in key.lower() for pattern in secret_patterns)
+                          
+                          if should_encrypt:
+                              # Build the secret key name from the path
+                              # Example: bos.host -> BOS_HOST
+                              secret_key = current_path.upper().replace('.', '_')
+                              
+                              log_info(f"Found secret property: {current_path} (looking for ${secret_key})")
+                              
+                              # Check if we have this secret in environment
+                              if secret_key in secrets_dict and secrets_dict[secret_key]:
+                                  plaintext_value = secrets_dict[secret_key]
+                                  log_info(f"  Encrypting {current_path}...")
+                                  
+                                  encrypted_value = encrypt_with_mule_tool(plaintext_value, decryption_key, tool_path)
+                                  
+                                  if encrypted_value:
+                                      # Update the value with encrypted format
+                                      data[key] = f"![{encrypted_value}]"
+                                      encrypted_count[0] += 1
+                                      log_success(f"  ✓ Encrypted: {current_path}")
+                                  else:
+                                      log_error(f"  ✗ Failed to encrypt: {current_path}")
+                              else:
+                                  log_warn(f"  Secret ${secret_key} not found in GitHub Secrets - skipping")
+                      
+                      # Recursively process nested dictionaries
+                      elif isinstance(value, dict):
+                          find_and_encrypt_secrets(value, current_path, secrets_dict, decryption_key, tool_path, encrypted_count)
+                      
+                      # Handle lists (if any)
+                      elif isinstance(value, list):
+                          for i, item in enumerate(value):
+                              if isinstance(item, dict):
+                                  find_and_encrypt_secrets(item, f"{current_path}[{i}]", secrets_dict, decryption_key, tool_path, encrypted_count)
+          
+          def main():
+              # Get environment
+              env = os.getenv('TARGET_ENV', 'DEV')
+              secure_file = f'src/main/resources/properties/config-secure-{env}.yaml'
+              
+              log_info(f"Starting generic encryption for {env} environment")
+              log_info(f"Processing file: {secure_file}")
+              
+              # Validate file exists
+              if not Path(secure_file).exists():
+                  log_error(f"Secure properties file not found: {secure_file}")
+                  sys.exit(1)
+              
+              # Get encryption key and tool path
+              decryption_key = os.getenv('DECRYPTION_KEY')
+              tool_path = os.getenv('SECURE_TOOL_PATH')
+              
+              if not decryption_key:
+                  log_error("DECRYPTION_KEY environment variable not set")
+                  sys.exit(1)
+              
+              if not tool_path or not Path(tool_path).exists():
+                  log_error(f"Secure properties tool not found at: {tool_path}")
+                  sys.exit(1)
+              
+              # Load all environment variables (GitHub Secrets) that might be secrets
+              secrets_dict = {}
+              for key, value in os.environ.items():
+                  # Capture all uppercase variables (potential secrets)
+                  if key.isupper() and value:
+                      secrets_dict[key] = value
+              
+              log_info(f"Loaded {len(secrets_dict)} potential secret variables from environment")
+              
+              # Create backup
+              backup_file = f"{secure_file}.backup"
+              Path(secure_file).replace(backup_file)
+              log_info(f"Created backup: {backup_file}")
+              
+              # Load YAML
+              with open(backup_file, 'r') as f:
+                  data = yaml.safe_load(f)
+              
+              if not data:
+                  log_error("Failed to load YAML or file is empty")
+                  sys.exit(1)
+              
+              # Process and encrypt
+              log_info("Scanning for secret properties...")
+              encrypted_count = [0]  # Use list for mutable counter in nested function
+              find_and_encrypt_secrets(data, "", secrets_dict, decryption_key, tool_path, encrypted_count)
+              
+              # Save encrypted YAML
+              with open(secure_file, 'w') as f:
+                  yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+              
+              log_success(f"Encryption completed successfully!")
+              log_success(f"Total properties encrypted: {encrypted_count[0]}")
+              
+              if encrypted_count[0] == 0:
+                  log_warn("No properties were encrypted. Please verify:")
+                  log_warn("  1. Secret properties exist in the YAML file")
+                  log_warn("  2. Matching GitHub Secrets are configured")
+                  log_warn("  3. Property names follow naming conventions")
+              
+              # Display summary
+              print("\n" + "="*60)
+              print(f" ENCRYPTION SUMMARY")
+              print("="*60)
+              print(f"Environment:     {env}")
+              print(f"File:            {secure_file}")
+              print(f"Properties:      {encrypted_count[0]} encrypted")
+              print(f"Status:          SUCCESS")
+              print("="*60 + "\n")
+          
+          if __name__ == "__main__":
+              try:
+                  main()
+              except Exception as e:
+                  log_error(f"Unexpected error: {str(e)}")
+                  import traceback
+                  traceback.print_exc()
+                  sys.exit(1)
+          
+          ENCRYPT_SCRIPT
+        env:
+          TARGET_ENV: ${{ env.TARGET_ENV }}
+          DECRYPTION_KEY: ${{ secrets.DECRYPTION_KEY }}
+          SECURE_TOOL_PATH: ${{ env.SECURE_TOOL_PATH }}
+          # All environment variables are automatically available
+          # The script will detect and use any SECRET_NAME variables
+
+      # Run MUnit Tests (80% coverage requirement)
+      - name: Run MUnit Tests
+        id: munit_test
+        run: |
+          echo "Running MUnit tests for environment ${TARGET_ENV}"
+          mvn -B test -s .maven/settings.xml -P${TARGET_ENV} -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}" -Ddecryption.key="${DECRYPTION_KEY}" 2>&1 | tee munit-output.log
+          
+          COVERAGE=$(grep "Application Coverage:" munit-output.log | grep -oP '\d+\.\d+(?=%)' | tail -1 || echo "")
+          echo "COVERAGE=${COVERAGE}" >> $GITHUB_ENV
+          echo "Coverage: ${COVERAGE}%"
+
+      - name: Check MUnit Coverage Threshold
+        run: |
+          THRESHOLD=$(mvn help:evaluate -Dexpression=munit.coverage.threshold -q -DforceStdout -P${TARGET_ENV})
+          COVERAGE="${{ env.COVERAGE }}"
+          
+          if [ -z "$COVERAGE" ]; then
+            echo "Error: Could not extract coverage percentage"
+            exit 1
+          fi
+          
+          echo "Current MUnit Coverage: ${COVERAGE}%"
+          echo "Required Threshold: ${THRESHOLD}%"
+          
+          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+            echo "MUnit coverage (${COVERAGE}%) is below the minimum threshold of ${THRESHOLD}%"
+            exit 1
+          else
+            echo "MUnit coverage (${COVERAGE}%) meets the minimum threshold of ${THRESHOLD}%"
+          fi
+
+      - name: Upload MUnit Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: munit-reports-dev
+          path: |
+            target/site/munit/coverage/
+            target/munit-reports/
+            target/surefire-reports/
+          if-no-files-found: warn
+
+      # Build and Package with encrypted properties
+      - name: Build with Maven
+        run: |
+          echo "Building application with encrypted secure properties..."
+          mvn -B clean package -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+          
+          echo "Application packaged successfully with encrypted properties"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mule-artifact-dev
+          path: target/*.jar
+          if-no-files-found: error
+          retention-days: 7
+
+      # Upload to Exchange
+      - name: Upload to Exchange
+        run: |
+          echo "Publishing SNAPSHOT version to Exchange..."
+          mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+
+      # API Management
+      - name: Install Anypoint CLI
+        run: |
+          npm install -g anypoint-cli-v4
+          sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Configure Anypoint CLI
+        run: |
+          anypoint-cli-v4 conf client_id "${CONNECTED_APP_CLIENT_ID}"
+          anypoint-cli-v4 conf client_secret "${CONNECTED_APP_CLIENT_SECRET}"
+          anypoint-cli-v4 conf organization "${ORG_ID}"
+
+      - name: Manage API Instance
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          ARTIFACT_ID=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout -P${TARGET_ENV})
+          API_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout -P${TARGET_ENV})
+          ENDPOINT_URI=$(mvn help:evaluate -Dexpression=api.manager.endpoint.uri -q -DforceStdout -P${TARGET_ENV})
+          DEPLOYMENT_TYPE=$(mvn help:evaluate -Dexpression=api.manager.deployment.type -q -DforceStdout -P${TARGET_ENV})
+          API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
+          API_SCHEME=$(mvn help:evaluate -Dexpression=api.manager.scheme -q -DforceStdout -P${TARGET_ENV})
+          API_PORT=$(mvn help:evaluate -Dexpression=api.manager.port -q -DforceStdout -P${TARGET_ENV})
+          
+          echo "Managing API: $REPO_NAME version $API_VERSION"
+          
+          API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$API_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id' || echo "")
+          
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            echo "Creating new API instance..."
+            CREATE_OUTPUT=$(anypoint-cli-v4 api-mgr:api:manage "$REPO_NAME" "$API_VERSION" --environment "${ANYPOINT_ENV}" --deploymentType "$DEPLOYMENT_TYPE" --endpointUri "$ENDPOINT_URI" --path "$API_PATH" --scheme "$API_SCHEME" --port "$API_PORT" --muleVersion4OrAbove --output json 2>&1)
+            
+            API_INSTANCE_ID=$(echo "$CREATE_OUTPUT" | jq -r '.id // .apiInstanceId // empty' 2>/dev/null || echo "")
+            
+            if [ -z "$API_INSTANCE_ID" ]; then
+              sleep 5
+              API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$API_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id')
+            fi
+          else
+            echo "API instance already exists with ID: $API_INSTANCE_ID"
+          fi
+          
+          echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
+          echo "$API_INSTANCE_ID" > api_instance_id.txt
+
+      - name: Upload API Instance ID
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-instance-id-dev
+          path: api_instance_id.txt
+
+      # Deploy to Development
+      - name: Deploy to Development Environment
+        run: |
+          API_INSTANCE_ID=$(cat api_instance_id.txt)
+          
+          echo "Deploying to ${ANYPOINT_ENV} with API ID ${API_INSTANCE_ID}"
+          echo "All deployment properties come from settings.xml profile: ${TARGET_ENV}"
+          
+          # Create properties file
+          echo "env=${TARGET_ENV}" > cloudhub-properties.txt
+          echo "api.id=${API_INSTANCE_ID}" >> cloudhub-properties.txt
+          echo "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" >> cloudhub-properties.txt
+          echo "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" >> cloudhub-properties.txt
+          
+          mvn -B mule:deploy -s .maven/settings.xml -P${TARGET_ENV} -DmuleDeploy -DskipMunitTests -Danypoint.organization=${ORG_ID} -Danypoint.environment="${ANYPOINT_ENV}" -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Danypoint.platform.client.id="${ANYPOINT_PLATFORM_CLIENT_ID}" -Danypoint.platform.client.secret="${ANYPOINT_PLATFORM_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dapi.id="${API_INSTANCE_ID}" -Dcloudhub2.applicationPropertiesFile=cloudhub-properties.txt
+
+      - name: Deployment Summary
+        if: success()
+        run: |
+          echo "Development deployment completed successfully!"
+          echo "Version: ${{ env.NEW_VERSION }}"
+          echo "Environment: ${ANYPOINT_ENV}"
+          echo "Secure properties were encrypted and packaged in the JAR"
