@@ -82,7 +82,7 @@ jobs:
           cd /tmp/mule-tools
           
           # Download the Mule Secure Properties CLI tool
-          wget -q https://docs.mulesoft.com/downloads/mule-runtime/4.4/secure-properties-tool.jar -O secure-properties-tool.jar
+          wget -q https://docs.mulesoft.com/mule-runtime/latest/_attachments/secure-properties-tool-j17.jar -O secure-properties-tool.jar
           
           if [ ! -f "secure-properties-tool.jar" ]; then
             echo "Failed to download secure-properties-tool.jar"
