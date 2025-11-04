@@ -19,7 +19,7 @@ jobs:
   ci_build_test_deploy_dev:
     name: CI Build, Test & Deploy to Development
     runs-on: ubuntu-latest
-    environment: dev
+    environment: Development
 
     steps:
       - name: Checkout code
