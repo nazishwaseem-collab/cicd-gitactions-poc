@@ -52,6 +52,7 @@ jobs:
           echo "DECRYPTION_KEY=${{ secrets.DECRYPTION_KEY }}" >> $GITHUB_ENV
           echo "NEXUS_USERNAME=${{ secrets.NEXUS_USERNAME }}" >> $GITHUB_ENV
           echo "NEXUS_PASSWORD=${{ secrets.NEXUS_PASSWORD }}" >> $GITHUB_ENV
+          echo "BOS_PORT=${{ secrets.BOS_PORT }}" >> $GITHUB_ENV
 
       # Set unique SNAPSHOT version for development
       - name: Set CI version (SNAPSHOT with build number)
@@ -289,6 +290,8 @@ jobs:
           TARGET_ENV: ${{ env.TARGET_ENV }}
           DECRYPTION_KEY: ${{ secrets.DECRYPTION_KEY }}
           SECURE_TOOL_PATH: ${{ env.SECURE_TOOL_PATH }}
+          BOS_HOST: ${{ secrets.BOS_HOST }}
+          BOS_PORT: ${{ secrets.BOS_PORT }}
           # All environment variables are automatically available
           # The script will detect and use any SECRET_NAME variables
 
