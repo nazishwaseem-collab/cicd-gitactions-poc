@@ -76,12 +76,25 @@ jobs:
           pip install pyyaml pycryptodome requests
           echo "Python packages installed"
 
-      # Setup Encryption Tool (Using Python Crypto instead of Java JAR)
-      - name: Setup Encryption Tool
+      # Download Mule Secure Properties Tool (Java 17 version)
+      - name: Download Mule Secure Properties Tool
         run: |
-          echo "Using Python Crypto for property encryption (compatible with Mule Secure Properties)"
-          echo "Python crypto libraries already installed"
-          echo "ENCRYPTION_METHOD=python_crypto" >> $GITHUB_ENV
+          echo "Downloading Mule Secure Properties Tool..."
+          mkdir -p /tmp/mule-tools
+          cd /tmp/mule-tools
+          wget -q https://docs.mulesoft.com/downloads/mule-runtime/4.4/secure-properties-tool.jar -O secure-properties-tool.jar
+          if [ ! -f "secure-properties-tool.jar" ] || [ ! -s "secure-properties-tool.jar" ]; then
+            echo "Failed to download from primary URL, trying alternative..."
+            wget -q https://repository.mulesoft.org/nexus/content/repositories/releases/com/mulesoft/anypoint/mule-secure-configuration-property-module/1.2.7/mule-secure-configuration-property-module-1.2.7.jar -O secure-properties-tool.jar --user "${NEXUS_USERNAME}:${NEXUS_PASSWORD}"
+          fi
+          if [ ! -f "secure-properties-tool.jar" ] || [ ! -s "secure-properties-tool.jar" ]; then
+            echo "Download failed. Using fallback encryption method."
+            echo "ENCRYPTION_METHOD=fallback" >> $GITHUB_ENV
+          else
+            echo "SECURE_TOOL_PATH=/tmp/mule-tools/secure-properties-tool.jar" >> $GITHUB_ENV
+            echo "Mule Secure Properties Tool downloaded successfully"
+            ls -lh secure-properties-tool.jar
+          fi
 
       # Generic Encryption - Automatically detects and encrypts all secret properties
       - name: Encrypt All Secure Properties (Generic)
