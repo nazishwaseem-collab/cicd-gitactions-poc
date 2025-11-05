@@ -4,7 +4,7 @@
         <http:listener-connection host="0.0.0.0" port="${https.port}" readTimeout="${https.timeout.readTimeOutInMillisec}" />
     </http:listener-config>
     <apikit:config name="cicd-gitactions-poc-config" api="resource::cdfa1988-3a90-4b73-98ba-5c388a10f44f:cicd-gitactions-poc:1.0.0:raml:zip:cicd-gitactions-poc.raml" outboundHeadersMapName="outboundHeaders" httpStatusVarName="httpStatus" />
-    <secure-properties:config name="Secure_Properties_Config" doc:name="Secure Properties Config" doc:id="368a810d-b17b-410a-a852-4194c064f729" file="properties/config-secure-${env}.yaml" key="${mule.encryptionKey}" />
+    <secure-properties:config name="Secure_Properties_Config" doc:name="Secure Properties Config" doc:id="368a810d-b17b-410a-a852-4194c064f729" file="properties/config-secure-${env}.yaml" key="${mule.key}" />
     <configuration-properties doc:name="Configuration properties" doc:id="7fc54205-f9d4-4045-bf21-55a98bf6f63b" file="properties/config-${env}.yaml" />
     <flow name="cicd-gitactions-poc-main">
         <http:listener config-ref="HTTP_Listener_config" path="/api/v1/*">
