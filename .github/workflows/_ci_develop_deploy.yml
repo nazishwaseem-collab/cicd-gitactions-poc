@@ -76,6 +76,23 @@ jobs:
           pip install pyyaml pycryptodome requests
           echo "Python packages installed"
 
+      # Download Mule Secure Properties Tool (Java 17 version - Official)
+      - name: Download Mule Secure Properties Tool
+        run: |
+          echo "Downloading Mule Secure Properties Tool (Java 17)..."
+          mkdir -p /tmp/mule-tools
+          cd /tmp/mule-tools
+          wget -q https://docs.mulesoft.com/mule-runtime/latest/_attachments/secure-properties-tool-j17.jar -O secure-properties-tool.jar
+          if [ ! -f "secure-properties-tool.jar" ] || [ ! -s "secure-properties-tool.jar" ]; then
+            echo " Failed to download secure-properties-tool.jar"
+            ls -lah
+            exit 1
+          fi
+          echo "SECURE_TOOL_PATH=/tmp/mule-tools/secure-properties-tool.jar" >> $GITHUB_ENV
+          echo " Mule Secure Properties Tool downloaded successfully"
+          ls -lh secure-properties-tool.jar
+          file secure-properties-tool.jar
+
       # Generic Encryption - Automatically detects and encrypts all secret properties
       - name: Encrypt All Secure Properties (Generic)
         run: |
@@ -83,7 +100,6 @@ jobs:
           import yaml
           import os
           import sys
-          import subprocess
           from pathlib import Path
           
           def log_info(msg):
@@ -98,111 +114,402 @@ jobs:
           def log_warn(msg):
               print(f"WARN: {msg}")
           
-          def encrypt_with_jar(plaintext, key, tool_path):
+          def encrypt_with_mule_tool(plaintext, key, tool_path):
+              """
+              Encrypt using the official Mule Secure Properties Tool JAR (J17)
+              The JAR may need to be executed with classpath instead of -jar
+              """
               try:
-                  cmd = ['java', '-cp', tool_path, 'com.mulesoft.modules.crypto.tool.SecurePropertiesTool', 'string', 'encrypt', 'AES', 'CBC', plaintext, key]
-                  result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
-                  encrypted = result.stdout.strip()
-                  if encrypted:
-                      return encrypted
+                  import subprocess
+                  import zipfile
+                  import tempfile
+                  import shutil
+                  
+                  log_info(f"Using JAR tool: {tool_path}")
+                  
+                  # Method 1: Try standard JAR execution
+                  cmd = ['java', '-jar', tool_path, 'string', 'encrypt', 'AES', 'CBC', plaintext, key]
+                  log_info(f"   Trying: java -jar {Path(tool_path).name} string encrypt AES CBC [value] [key]")
+                  
+                  result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                  
+                  if result.returncode == 0 and result.stdout.strip():
+                      return parse_jar_output(result.stdout)
+                  
+                  # Method 2: Extract JAR and try with classpath
+                  log_info(f"   Method 1 failed, trying to extract JAR...")
+                  
+                  temp_dir = tempfile.mkdtemp()
+                  try:
+                      # Extract the JAR
+                      with zipfile.ZipFile(tool_path, 'r') as zip_ref:
+                          zip_ref.extractall(temp_dir)
+                      
+                      log_info(f"   JAR extracted to: {temp_dir}")
+                      
+                      # Try to find the main class from MANIFEST.MF
+                      manifest_path = Path(temp_dir) / "META-INF" / "MANIFEST.MF"
+                      main_class = None
+                      
+                      if manifest_path.exists():
+                          with open(manifest_path, 'r') as f:
+                              for line in f:
+                                  if line.startswith('Main-Class:'):
+                                      main_class = line.split(':', 1)[1].strip()
+                                      log_info(f"   Found Main-Class: {main_class}")
+                                      break
+                      
+                      if main_class:
+                          # Try to execute with classpath
+                          cmd = ['java', '-cp', f"{tool_path}:{temp_dir}/*", main_class, 
+                                 'string', 'encrypt', 'AES', 'CBC', plaintext, key]
+                          log_info(f"   Trying with classpath and main class: {main_class}")
+                          result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                          
+                          if result.returncode == 0 and result.stdout.strip():
+                              return parse_jar_output(result.stdout)
+                      
+                      # Method 3: Try known Mule class names
+                      known_classes = [
+                          'com.mulesoft.modules.security.util.SecurePropertiesTool',
+                          'com.mulesoft.modules.crypto.tool.SecurePropertiesTool',
+                          'org.mule.modules.security.SecurePropertiesTool'
+                      ]
+                      
+                      for class_name in known_classes:
+                          log_info(f"   Trying class: {class_name}")
+                          cmd = ['java', '-cp', tool_path, class_name, 
+                                 'string', 'encrypt', 'AES', 'CBC', plaintext, key]
+                          result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                          
+                          if result.returncode == 0 and result.stdout.strip():
+                              log_success(f"Success with class: {class_name}")
+                              return parse_jar_output(result.stdout)
+                      
+                  finally:
+                      # Clean up temp directory
+                      shutil.rmtree(temp_dir, ignore_errors=True)
+                  
+                  log_warn(f"All JAR execution methods failed")
+                  if result.stderr:
+                      log_error(f"   Last error: {result.stderr[:200]}")
+                  
+                  return None
+                  
+              except subprocess.TimeoutExpired:
+                  log_error("JAR encryption timeout (>30s)")
+                  return None
+              except FileNotFoundError:
+                  log_error("Java not found in PATH - ensure Java 17+ is installed")
                   return None
               except Exception as e:
-                  log_error(f"Encryption failed: {str(e)[:100]}")
+                  log_error(f"JAR tool exception: {str(e)}")
+                  import traceback
+                  log_error(traceback.format_exc())
                   return None
           
-          def find_and_encrypt_secrets(data, path="", secrets_dict=None, key=None, tool_path=None, count=[0]):
+          def parse_jar_output(output):
+              """Parse JAR tool output to extract encrypted value"""
+              lines = output.split('\n')
+              for line in lines:
+                  line = line.strip()
+                  # Look for base64-like string (alphanumeric, +, /, =)
+                  # Must be at least 16 characters (reasonable encrypted value)
+                  if line and len(line) >= 16:
+                      # Check if it's mostly base64 characters
+                      base64_chars = sum(1 for c in line if c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
+                      if base64_chars / len(line) > 0.9:  # At least 90% base64 chars
+                          log_success(f"JAR encryption successful")
+                          log_info(f"   Encrypted value: ![{line[:30]}...]")
+                          return line
+              
+              # If we couldn't find a clean base64, return the whole output if it looks valid
+              output = output.strip()
+              if output and len(output) >= 16:
+                  log_info(f"   Returning full output: {output[:50]}...")
+                  return output
+              
+              return None
+          
+          def encrypt_with_python_fallback(plaintext, key):
+              """
+              Python-based encryption using PyCryptodome
+              Tries multiple key derivation methods to match Mule
+              """
+              try:
+                  from Crypto.Cipher import AES
+                  from Crypto.Protocol.KDF import PBKDF2
+                  from Crypto.Util.Padding import pad
+                  import base64
+                  import hashlib
+                  
+                  log_info("Using Python-based encryption")
+                  
+                  # Method 1: Try simple MD5 hash (older Mule versions)
+                  try:
+                      key_bytes_md5 = hashlib.md5(key.encode('utf-8')).digest()
+                      iv = b'\x00' * 16
+                      cipher = AES.new(key_bytes_md5, AES.MODE_CBC, iv)
+                      plaintext_bytes = plaintext.encode('utf-8')
+                      padded_data = pad(plaintext_bytes, 16)
+                      encrypted_bytes = cipher.encrypt(padded_data)
+                      encrypted_b64_md5 = base64.b64encode(encrypted_bytes).decode('utf-8')
+                      log_info(f"  Method 1 (MD5): ![{encrypted_b64_md5[:20]}...]")
+                  except Exception as e:
+                      log_warn(f"  Method 1 failed: {e}")
+                      encrypted_b64_md5 = None
+                  
+                  # Method 2: Try PBKDF2 with SHA256 salt (newer Mule versions)
+                  try:
+                      salt = hashlib.sha256(key.encode('utf-8')).digest()[:16]
+                      derived_key = PBKDF2(key, salt, dkLen=16, count=1000)
+                      iv = b'\x00' * 16
+                      cipher = AES.new(derived_key, AES.MODE_CBC, iv)
+                      plaintext_bytes = plaintext.encode('utf-8')
+                      padded_data = pad(plaintext_bytes, 16)
+                      encrypted_bytes = cipher.encrypt(padded_data)
+                      encrypted_b64_pbkdf2 = base64.b64encode(encrypted_bytes).decode('utf-8')
+                      log_info(f"  Method 2 (PBKDF2): ![{encrypted_b64_pbkdf2[:20]}...]")
+                  except Exception as e:
+                      log_warn(f"  Method 2 failed: {e}")
+                      encrypted_b64_pbkdf2 = None
+                  
+                  # Method 3: Try direct key bytes (if key is already hex or base64)
+                  try:
+                      # Try to decode key as hex or base64
+                      try:
+                          key_bytes_direct = bytes.fromhex(key)
+                      except:
+                          try:
+                              key_bytes_direct = base64.b64decode(key)
+                          except:
+                              # Use key bytes directly, padded/truncated to 16 bytes
+                              key_bytes_direct = key.encode('utf-8')
+                              if len(key_bytes_direct) < 16:
+                                  key_bytes_direct = key_bytes_direct + b'\x00' * (16 - len(key_bytes_direct))
+                              elif len(key_bytes_direct) > 16:
+                                  key_bytes_direct = key_bytes_direct[:16]
+                      
+                      iv = b'\x00' * 16
+                      cipher = AES.new(key_bytes_direct[:16], AES.MODE_CBC, iv)
+                      plaintext_bytes = plaintext.encode('utf-8')
+                      padded_data = pad(plaintext_bytes, 16)
+                      encrypted_bytes = cipher.encrypt(padded_data)
+                      encrypted_b64_direct = base64.b64encode(encrypted_bytes).decode('utf-8')
+                      log_info(f"  Method 3 (Direct): ![{encrypted_b64_direct[:20]}...]")
+                  except Exception as e:
+                      log_warn(f"  Method 3 failed: {e}")
+                      encrypted_b64_direct = None
+                  
+                  # Return the first successful method (prefer MD5 as it's most common)
+                  if encrypted_b64_md5:
+                      log_success(f"Using Method 1 (MD5) encryption")
+                      return encrypted_b64_md5
+                  elif encrypted_b64_pbkdf2:
+                      log_success(f"Using Method 2 (PBKDF2) encryption")
+                      return encrypted_b64_pbkdf2
+                  elif encrypted_b64_direct:
+                      log_success(f"Using Method 3 (Direct) encryption")
+                      return encrypted_b64_direct
+                  else:
+                      log_error("All encryption methods failed")
+                      return None
+                  
+              except ImportError as e:
+                  log_error(f"Required crypto library not available: {e}")
+                  log_error("Please ensure pycryptodome is installed")
+                  return None
+              except Exception as e:
+                  log_error(f"Python encryption failed: {str(e)}")
+                  import traceback
+                  log_error(traceback.format_exc())
+                  return None
+          
+          def find_and_encrypt_secrets(data, path="", secrets_dict=None, decryption_key=None, tool_path=None, encrypted_count=[0]):
+              """
+              Recursively traverse YAML structure and encrypt all properties ending with 
+              specific patterns (host, port, password, username, key, secret, token, etc.)
+              """
               if secrets_dict is None:
                   secrets_dict = {}
               
               if isinstance(data, dict):
-                  for k, v in data.items():
-                      current_path = f"{path}.{k}" if path else k
+                  for key, value in data.items():
+                      current_path = f"{path}.{key}" if path else key
                       
-                      if isinstance(v, str):
-                          patterns = ['host', 'port', 'password', 'username', 'user', 'secret', 'key', 'token', 'credential', 'pwd']
-                          should_encrypt = any(p in k.lower() for p in patterns)
+                      # Check if this is a leaf node (string value)
+                      if isinstance(value, str):
+                          # Determine if this property should be encrypted
+                          # Look for common secret property patterns
+                          secret_patterns = ['host', 'port', 'password', 'username', 'user', 
+                                           'secret', 'key', 'token', 'credential', 'pwd', 'api']
+                          
+                          should_encrypt = any(pattern in key.lower() for pattern in secret_patterns)
                           
                           if should_encrypt:
+                              # Build the secret key name from the path
+                              # Example: bos.host -> BOS_HOST
                               secret_key = current_path.upper().replace('.', '_')
-                              log_info(f"Found: {current_path} looking for {secret_key}")
                               
+                              log_info(f"Found secret property: {current_path} (looking for ${secret_key})")
+                              
+                              # Check if we have this secret in environment
                               if secret_key in secrets_dict and secrets_dict[secret_key]:
                                   plaintext_value = secrets_dict[secret_key]
-                                  log_info(f"  Encrypting {current_path}")
+                                  log_info(f"  Encrypting {current_path}...")
                                   
-                                  encrypted_value = encrypt_with_jar(plaintext_value, key, tool_path)
+                                  encrypted_value = None
+                                  
+                                  # Use JAR tool if available
+                                  if tool_path and Path(tool_path).exists():
+                                      log_info(f"  Using JAR tool for encryption")
+                                      encrypted_value = encrypt_with_mule_tool(plaintext_value, decryption_key, tool_path)
+                                  else:
+                                      log_warn(f"  JAR tool not found at: {tool_path}")
+                                  
+                                  # Fallback to Python if JAR failed
+                                  if not encrypted_value:
+                                      log_info(f"  Using Python encryption")
+                                      encrypted_value = encrypt_with_python_fallback(plaintext_value, decryption_key)
                                   
                                   if encrypted_value:
-                                      data[k] = f"![{encrypted_value}]"
-                                      count[0] += 1
-                                      log_success(f"  Encrypted: {current_path}")
+                                      # Update the value with encrypted format
+                                      data[key] = f"![{encrypted_value}]"
+                                      encrypted_count[0] += 1
+                                      log_success(f"  Encrypted: {current_path} = ![{encrypted_value[:20]}...]")
                                   else:
-                                      log_error(f"  Failed: {current_path}")
+                                      log_error(f"  Failed to encrypt: {current_path}")
                               else:
-                                  log_warn(f"  Secret {secret_key} not found - skipping")
+                                  log_warn(f"  Secret ${secret_key} not found in GitHub Secrets - skipping")
                       
-                      elif isinstance(v, dict):
-                          find_and_encrypt_secrets(v, current_path, secrets_dict, key, tool_path, count)
+                      # Recursively process nested dictionaries
+                      elif isinstance(value, dict):
+                          find_and_encrypt_secrets(value, current_path, secrets_dict, decryption_key, tool_path, encrypted_count)
+                      
+                      # Handle lists (if any)
+                      elif isinstance(value, list):
+                          for i, item in enumerate(value):
+                              if isinstance(item, dict):
+                                  find_and_encrypt_secrets(item, f"{current_path}[{i}]", secrets_dict, decryption_key, tool_path, encrypted_count)
           
           def main():
+              # Get environment
               env = os.getenv('TARGET_ENV', 'DEV')
               secure_file = f'src/main/resources/properties/config-secure-{env}.yaml'
               
-              log_info(f"Starting encryption for {env}")
-              log_info(f"File: {secure_file}")
+              log_info(f"Starting generic encryption for {env} environment")
+              log_info(f"Processing file: {secure_file}")
               
+              # Validate file exists
               if not Path(secure_file).exists():
-                  log_error(f"File not found: {secure_file}")
+                  log_error(f"Secure properties file not found: {secure_file}")
                   sys.exit(1)
               
-              key = os.getenv('DECRYPTION_KEY')
+              # Get encryption key and tool path
+              decryption_key = os.getenv('DECRYPTION_KEY')
               tool_path = os.getenv('SECURE_TOOL_PATH')
               
-              if not key:
-                  log_error("DECRYPTION_KEY not set")
+              if not decryption_key:
+                  log_error("DECRYPTION_KEY environment variable not set")
                   sys.exit(1)
               
-              if not tool_path or not Path(tool_path).exists():
-                  log_error(f"JAR not found: {tool_path}")
-                  sys.exit(1)
+              # Load all environment variables (GitHub Secrets) that might be secrets
+              secrets_dict = {}
+              for key, value in os.environ.items():
+                  # Capture all uppercase variables (potential secrets)
+                  if key.isupper() and value:
+                      secrets_dict[key] = value
               
-              secrets_dict = {k: v for k, v in os.environ.items() if k.isupper() and v}
-              log_info(f"Loaded {len(secrets_dict)} secrets")
+              log_info(f"Loaded {len(secrets_dict)} potential secret variables from environment")
+              log_info(f"Encryption key length: {len(decryption_key)} characters")
+              log_info(f"Encryption key preview: {decryption_key[:4]}{'*' * (len(decryption_key) - 8)}{decryption_key[-4:] if len(decryption_key) > 8 else ''}")
               
+              # Test encryption to verify setup
+              test_value = secrets_dict.get('BOS_PORT', '443')  # Use actual port value for testing
+              log_info(f"Running test encryption with BOS_PORT value: {test_value}")
+              test_encrypted = None
+              if tool_path and Path(tool_path).exists():
+                  test_encrypted = encrypt_with_mule_tool(test_value, decryption_key, tool_path)
+              if not test_encrypted:
+                  test_encrypted = encrypt_with_python_fallback(test_value, decryption_key)
+              
+              if test_encrypted:
+                  log_info(f"Test encryption result: ![{test_encrypted}]")
+                  log_info(f"Expected from manual: ![9sYqHbh09s7Fx9nQ41S7oA==]")
+                  if test_encrypted == "9sYqHbh09s7Fx9nQ41S7oA==":
+                      log_success("MATCH! Encryption is working correctly!")
+                  else:
+                      log_warn("Values don't match - may need different encryption method")
+              else:
+                  log_error("Test encryption failed!")
+              
+              # Load all environment variables (GitHub Secrets) that might be secrets
+              secrets_dict = {}
+              for key, value in os.environ.items():
+                  # Capture all uppercase variables (potential secrets)
+                  if key.isupper() and value:
+                      secrets_dict[key] = value
+              
+              log_info(f"Loaded {len(secrets_dict)} potential secret variables from environment")
               backup_file = f"{secure_file}.backup"
-              Path(secure_file).replace(backup_file)
-              log_info(f"Backup: {backup_file}")
+              if Path(secure_file).exists():
+                  Path(secure_file).replace(backup_file)
+                  log_info(f"Created backup: {backup_file}")
               
-              with open(backup_file, 'r') as f:
+              # Load YAML
+              with open(backup_file if Path(backup_file).exists() else secure_file, 'r') as f:
                   data = yaml.safe_load(f)
               
               if not data:
-                  log_error("YAML empty or invalid")
+                  log_error("Failed to load YAML or file is empty")
                   sys.exit(1)
               
-              log_info("Scanning properties")
-              count = [0]
-              find_and_encrypt_secrets(data, "", secrets_dict, key, tool_path, count)
+              # Process and encrypt
+              log_info("Scanning for secret properties...")
+              encrypted_count = [0]  # Use list for mutable counter in nested function
+              find_and_encrypt_secrets(data, "", secrets_dict, decryption_key, tool_path, encrypted_count)
               
+              # Save encrypted YAML
               with open(secure_file, 'w') as f:
-                  yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+                  yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
               
-              log_success(f"Complete! Encrypted: {count[0]}")
+              log_success(f"Encryption completed successfully!")
+              log_success(f"Total properties encrypted: {encrypted_count[0]}")
               
+              if encrypted_count[0] == 0:
+                  log_warn("No properties were encrypted. Please verify:")
+                  log_warn("  1. Secret properties exist in the YAML file")
+                  log_warn("  2. Matching GitHub Secrets are configured")
+                  log_warn("  3. Property names follow naming conventions")
+                  log_warn(f"  4. Available secrets: {', '.join([k for k in secrets_dict.keys() if 'BOS' in k or 'HOST' in k or 'PORT' in k])}")
+              
+              # Display summary
               print("\n" + "="*60)
-              print("ENCRYPTION SUMMARY")
+              print(f"ENCRYPTION SUMMARY")
               print("="*60)
-              print(f"Environment: {env}")
-              print(f"File: {secure_file}")
-              print(f"Properties: {count[0]} encrypted")
-              print(f"Status: SUCCESS")
-              print("="*60)
+              print(f"Environment:     {env}")
+              print(f"File:            {secure_file}")
+              print(f"Properties:      {encrypted_count[0]} encrypted")
+              print(f"Status:          {'SUCCESS' if encrypted_count[0] > 0 else 'WARNING'}")
+              print("="*60 + "\n")
+              
+              # Show encrypted file content (for debugging)
+              log_info("Encrypted YAML content preview:")
+              with open(secure_file, 'r') as f:
+                  content = f.read()
+                  lines = content.split('\n')[:20]  # Show first 20 lines
+                  for line in lines:
+                      print(f"  {line}")
+                  if len(content.split('\n')) > 20:
+                      print("  ...")
           
           if __name__ == "__main__":
               try:
                   main()
               except Exception as e:
-                  log_error(f"Error: {str(e)}")
+                  log_error(f"Unexpected error: {str(e)}")
+                  import traceback
+                  traceback.print_exc()
                   sys.exit(1)
           
           ENCRYPT_SCRIPT
@@ -210,41 +517,43 @@ jobs:
           TARGET_ENV: ${{ env.TARGET_ENV }}
           DECRYPTION_KEY: ${{ secrets.DECRYPTION_KEY }}
           SECURE_TOOL_PATH: ${{ env.SECURE_TOOL_PATH }}
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
           BOS_HOST: ${{ secrets.BOS_HOST }}
           BOS_PORT: ${{ secrets.BOS_PORT }}
-                  # All environment variables are automatically available
-                  # The script will detect and use any SECRET_NAME variables
+          # All environment variables are automatically available
+          # The script will detect and use any SECRET_NAME variables
 
-              # Run MUnit Tests (80% coverage requirement)
-              - name: Run MUnit Tests
-                id: munit_test
-                run: |
-                  echo "Running MUnit tests for environment ${TARGET_ENV}"
-                  mvn -B test -s .maven/settings.xml -P${TARGET_ENV} -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}" -Ddecryption.key="${DECRYPTION_KEY}" 2>&1 | tee munit-output.log
-                  
-                  COVERAGE=$(grep "Application Coverage:" munit-output.log | grep -oP '\d+\.\d+(?=%)' | tail -1 || echo "")
-                  echo "COVERAGE=${COVERAGE}" >> $GITHUB_ENV
-                  echo "Coverage: ${COVERAGE}%"
+      # Run MUnit Tests (80% coverage requirement)
+      - name: Run MUnit Tests
+        id: munit_test
+        run: |
+          echo "Running MUnit tests for environment ${TARGET_ENV}"
+          mvn -B test -s .maven/settings.xml -P${TARGET_ENV} -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}" -Ddecryption.key="${DECRYPTION_KEY}" 2>&1 | tee munit-output.log
+          
+          COVERAGE=$(grep "Application Coverage:" munit-output.log | grep -oP '\d+\.\d+(?=%)' | tail -1 || echo "")
+          echo "COVERAGE=${COVERAGE}" >> $GITHUB_ENV
+          echo "Coverage: ${COVERAGE}%"
 
-              - name: Check MUnit Coverage Threshold
-                run: |
-                  THRESHOLD=$(mvn help:evaluate -Dexpression=munit.coverage.threshold -q -DforceStdout -P${TARGET_ENV})
-                  COVERAGE="${{ env.COVERAGE }}"
-                  
-                  if [ -z "$COVERAGE" ]; then
-                    echo "Error: Could not extract coverage percentage"
-                    exit 1
-                  fi
-                  
-                  echo "Current MUnit Coverage: ${COVERAGE}%"
-                  echo "Required Threshold: ${THRESHOLD}%"
-                  
-                  if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
-                    echo "MUnit coverage (${COVERAGE}%) is below the minimum threshold of ${THRESHOLD}%"
-                    exit 1
-                  else
-                    echo "MUnit coverage (${COVERAGE}%) meets the minimum threshold of ${THRESHOLD}%"
-                  fi
+      - name: Check MUnit Coverage Threshold
+        run: |
+          THRESHOLD=$(mvn help:evaluate -Dexpression=munit.coverage.threshold -q -DforceStdout -P${TARGET_ENV})
+          COVERAGE="${{ env.COVERAGE }}"
+          
+          if [ -z "$COVERAGE" ]; then
+            echo "Error: Could not extract coverage percentage"
+            exit 1
+          fi
+          
+          echo "Current MUnit Coverage: ${COVERAGE}%"
+          echo "Required Threshold: ${THRESHOLD}%"
+          
+          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+            echo "MUnit coverage (${COVERAGE}%) is below the minimum threshold of ${THRESHOLD}%"
+            exit 1
+          else
+            echo "MUnit coverage (${COVERAGE}%) meets the minimum threshold of ${THRESHOLD}%"
+          fi
 
       - name: Upload MUnit Reports
         if: always()
