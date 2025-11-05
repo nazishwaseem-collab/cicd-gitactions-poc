@@ -76,25 +76,22 @@ jobs:
           pip install pyyaml pycryptodome requests
           echo "Python packages installed"
 
-      # Download Mule Secure Properties Tool (Java 17 version)
+      # Download Mule Secure Properties Tool (Java 17 version - Official)
       - name: Download Mule Secure Properties Tool
         run: |
-          echo "Downloading Mule Secure Properties Tool..."
+          echo "Downloading Mule Secure Properties Tool (Java 17)..."
           mkdir -p /tmp/mule-tools
           cd /tmp/mule-tools
           wget -q https://docs.mulesoft.com/mule-runtime/latest/_attachments/secure-properties-tool-j17.jar -O secure-properties-tool.jar
           if [ ! -f "secure-properties-tool.jar" ] || [ ! -s "secure-properties-tool.jar" ]; then
-            echo "Failed to download from primary URL, trying alternative..."
-            wget -q https://repository.mulesoft.org/nexus/content/repositories/releases/com/mulesoft/anypoint/mule-secure-configuration-property-module/1.2.7/mule-secure-configuration-property-module-1.2.7.jar -O secure-properties-tool.jar --user "${NEXUS_USERNAME}:${NEXUS_PASSWORD}"
+            echo " Failed to download secure-properties-tool.jar"
+            ls -lah
+            exit 1
           fi
-          if [ ! -f "secure-properties-tool.jar" ] || [ ! -s "secure-properties-tool.jar" ]; then
-            echo "Download failed. Using fallback encryption method."
-            echo "ENCRYPTION_METHOD=fallback" >> $GITHUB_ENV
-          else
-            echo "SECURE_TOOL_PATH=/tmp/mule-tools/secure-properties-tool.jar" >> $GITHUB_ENV
-            echo "Mule Secure Properties Tool downloaded successfully"
-            ls -lh secure-properties-tool.jar
-          fi
+          echo "SECURE_TOOL_PATH=/tmp/mule-tools/secure-properties-tool.jar" >> $GITHUB_ENV
+          echo " Mule Secure Properties Tool downloaded successfully"
+          ls -lh secure-properties-tool.jar
+          file secure-properties-tool.jar
 
       # Generic Encryption - Automatically detects and encrypts all secret properties
       - name: Encrypt All Secure Properties (Generic)
@@ -117,43 +114,164 @@ jobs:
           def log_warn(msg):
               print(f"  {msg}")
           
-          def encrypt_with_mule_compatible(plaintext, key):
+          def encrypt_with_mule_tool(plaintext, key, tool_path):
               """
-              Encrypt a value using AES/CBC compatible with Mule Secure Properties
-              Uses PyCryptodome to replicate the same encryption algorithm
-              Matches: Algorithm=AES, State=CBC, Use random IVs=False
+              Encrypt using the official Mule Secure Properties Tool JAR (J17)
+              Command format: java -jar secure-properties-tool.jar string encrypt <algorithm> <mode> <value> <key>
+              """
+              try:
+                  import subprocess
+                  
+                  log_info(f"🔧 Using JAR tool: {tool_path}")
+                  
+                  # Official command format for secure-properties-tool-j17.jar
+                  cmd = ['java', '-jar', tool_path, 'string', 'encrypt', 'AES', 'CBC', plaintext, key]
+                  log_info(f"   Command: java -jar {Path(tool_path).name} string encrypt AES CBC [value] [key]")
+                  
+                  result = subprocess.run(
+                      cmd,
+                      capture_output=True,
+                      text=True,
+                      timeout=30
+                  )
+                  
+                  log_info(f"   Exit code: {result.returncode}")
+                  
+                  if result.stdout:
+                      log_info(f"   stdout: {result.stdout[:200]}")
+                  if result.stderr:
+                      log_info(f"   stderr: {result.stderr[:200]}")
+                  
+                  if result.returncode == 0:
+                      # Success - parse the output
+                      output = result.stdout.strip()
+                      
+                      # The tool outputs the encrypted value, possibly with some text
+                      # Look for the base64 string
+                      lines = output.split('\n')
+                      for line in lines:
+                          line = line.strip()
+                          # Look for base64-like string (alphanumeric, +, /, =)
+                          # Must be at least 16 characters (reasonable encrypted value)
+                          if line and len(line) >= 16:
+                              # Check if it's mostly base64 characters
+                              base64_chars = sum(1 for c in line if c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
+                              if base64_chars / len(line) > 0.9:  # At least 90% base64 chars
+                                  log_success(f" JAR encryption successful")
+                                  log_info(f"   Encrypted value: ![{line[:30]}...]")
+                                  return line
+                      
+                      # If we couldn't parse a clean base64, return the whole output
+                      if output:
+                          log_success(f" JAR encryption completed (returning full output)")
+                          return output
+                  
+                  # If we get here, JAR tool failed
+                  log_warn(f" JAR tool returned non-zero exit code or no output")
+                  return None
+                  
+              except subprocess.TimeoutExpired:
+                  log_error(" JAR encryption timeout (>30s)")
+                  return None
+              except FileNotFoundError:
+                  log_error(" Java not found in PATH - ensure Java 17+ is installed")
+                  return None
+              except Exception as e:
+                  log_error(f" JAR tool exception: {str(e)}")
+                  import traceback
+                  log_error(traceback.format_exc())
+                  return None
+          
+          def encrypt_with_python_fallback(plaintext, key):
+              """
+              Python-based encryption using PyCryptodome
+              Tries multiple key derivation methods to match Mule
               """
               try:
                   from Crypto.Cipher import AES
+                  from Crypto.Protocol.KDF import PBKDF2
                   from Crypto.Util.Padding import pad
                   import base64
                   import hashlib
                   
-                  # Mule uses MD5 hash of the key for AES encryption (128-bit key)
-                  key_bytes = hashlib.md5(key.encode('utf-8')).digest()
+                  log_info(" Using Python-based encryption")
                   
-                  # Create AES cipher in CBC mode with zero IV (since "Use random IVs" is unchecked)
-                  iv = b'\x00' * 16  # AES block size is 16 bytes
-                  cipher = AES.new(key_bytes, AES.MODE_CBC, iv)
+                  # Method 1: Try simple MD5 hash (older Mule versions)
+                  try:
+                      key_bytes_md5 = hashlib.md5(key.encode('utf-8')).digest()
+                      iv = b'\x00' * 16
+                      cipher = AES.new(key_bytes_md5, AES.MODE_CBC, iv)
+                      plaintext_bytes = plaintext.encode('utf-8')
+                      padded_data = pad(plaintext_bytes, 16)
+                      encrypted_bytes = cipher.encrypt(padded_data)
+                      encrypted_b64_md5 = base64.b64encode(encrypted_bytes).decode('utf-8')
+                      log_info(f"  Method 1 (MD5): ![{encrypted_b64_md5[:20]}...]")
+                  except Exception as e:
+                      log_warn(f"  Method 1 failed: {e}")
+                      encrypted_b64_md5 = None
                   
-                  # Pad the plaintext to AES block size (16 bytes)
-                  plaintext_bytes = plaintext.encode('utf-8')
-                  padded_data = pad(plaintext_bytes, 16)
+                  # Method 2: Try PBKDF2 with SHA256 salt (newer Mule versions)
+                  try:
+                      salt = hashlib.sha256(key.encode('utf-8')).digest()[:16]
+                      derived_key = PBKDF2(key, salt, dkLen=16, count=1000)
+                      iv = b'\x00' * 16
+                      cipher = AES.new(derived_key, AES.MODE_CBC, iv)
+                      plaintext_bytes = plaintext.encode('utf-8')
+                      padded_data = pad(plaintext_bytes, 16)
+                      encrypted_bytes = cipher.encrypt(padded_data)
+                      encrypted_b64_pbkdf2 = base64.b64encode(encrypted_bytes).decode('utf-8')
+                      log_info(f"  Method 2 (PBKDF2): ![{encrypted_b64_pbkdf2[:20]}...]")
+                  except Exception as e:
+                      log_warn(f"  Method 2 failed: {e}")
+                      encrypted_b64_pbkdf2 = None
                   
-                  # Encrypt
-                  encrypted_bytes = cipher.encrypt(padded_data)
+                  # Method 3: Try direct key bytes (if key is already hex or base64)
+                  try:
+                      # Try to decode key as hex or base64
+                      try:
+                          key_bytes_direct = bytes.fromhex(key)
+                      except:
+                          try:
+                              key_bytes_direct = base64.b64decode(key)
+                          except:
+                              # Use key bytes directly, padded/truncated to 16 bytes
+                              key_bytes_direct = key.encode('utf-8')
+                              if len(key_bytes_direct) < 16:
+                                  key_bytes_direct = key_bytes_direct + b'\x00' * (16 - len(key_bytes_direct))
+                              elif len(key_bytes_direct) > 16:
+                                  key_bytes_direct = key_bytes_direct[:16]
+                      
+                      iv = b'\x00' * 16
+                      cipher = AES.new(key_bytes_direct[:16], AES.MODE_CBC, iv)
+                      plaintext_bytes = plaintext.encode('utf-8')
+                      padded_data = pad(plaintext_bytes, 16)
+                      encrypted_bytes = cipher.encrypt(padded_data)
+                      encrypted_b64_direct = base64.b64encode(encrypted_bytes).decode('utf-8')
+                      log_info(f"  Method 3 (Direct): ![{encrypted_b64_direct[:20]}...]")
+                  except Exception as e:
+                      log_warn(f"  Method 3 failed: {e}")
+                      encrypted_b64_direct = None
                   
-                  # Base64 encode the result
-                  encrypted_b64 = base64.b64encode(encrypted_bytes).decode('utf-8')
-                  
-                  return encrypted_b64
+                  # Return the first successful method (prefer MD5 as it's most common)
+                  if encrypted_b64_md5:
+                      log_success(f" Using Method 1 (MD5) encryption")
+                      return encrypted_b64_md5
+                  elif encrypted_b64_pbkdf2:
+                      log_success(f" Using Method 2 (PBKDF2) encryption")
+                      return encrypted_b64_pbkdf2
+                  elif encrypted_b64_direct:
+                      log_success(f" Using Method 3 (Direct) encryption")
+                      return encrypted_b64_direct
+                  else:
+                      log_error(" All encryption methods failed")
+                      return None
                   
               except ImportError as e:
-                  log_error(f"Crypto library not available: {e}")
-                  log_error("Please ensure pycryptodome is installed: pip install pycryptodome")
+                  log_error(f" Required crypto library not available: {e}")
+                  log_error("Please ensure pycryptodome is installed")
                   return None
               except Exception as e:
-                  log_error(f"Encryption error: {str(e)}")
+                  log_error(f" Python encryption failed: {str(e)}")
                   import traceback
                   log_error(traceback.format_exc())
                   return None
@@ -191,13 +309,25 @@ jobs:
                                   plaintext_value = secrets_dict[secret_key]
                                   log_info(f"  Encrypting {current_path}...")
                                   
-                                  encrypted_value = encrypt_with_mule_compatible(plaintext_value, decryption_key)
+                                  encrypted_value = None
+                                  
+                                  # Use JAR tool if available
+                                  if tool_path and Path(tool_path).exists():
+                                      log_info(f" Using JAR tool for encryption")
+                                      encrypted_value = encrypt_with_mule_tool(plaintext_value, decryption_key, tool_path)
+                                  else:
+                                      log_warn(f" JAR tool not found at: {tool_path}")
+                                  
+                                  # Fallback to Python if JAR failed
+                                  if not encrypted_value:
+                                      log_info(f"   Using Python encryption")
+                                      encrypted_value = encrypt_with_python_fallback(plaintext_value, decryption_key)
                                   
                                   if encrypted_value:
                                       # Update the value with encrypted format
                                       data[key] = f"![{encrypted_value}]"
                                       encrypted_count[0] += 1
-                                      log_success(f"  ✓ Encrypted: {current_path}")
+                                      log_success(f"  ✓ Encrypted: {current_path} = ![{encrypted_value[:20]}...]")
                                   else:
                                       log_error(f"  ✗ Failed to encrypt: {current_path}")
                               else:
@@ -226,12 +356,30 @@ jobs:
                   log_error(f"Secure properties file not found: {secure_file}")
                   sys.exit(1)
               
-              # Get encryption key
+              # Get encryption key and tool path
               decryption_key = os.getenv('DECRYPTION_KEY')
+              tool_path = os.getenv('SECURE_TOOL_PATH')
               
               if not decryption_key:
                   log_error("DECRYPTION_KEY environment variable not set")
                   sys.exit(1)
+              
+              log_info(f"Encryption key length: {len(decryption_key)} characters")
+              log_info(f"Encryption key preview: {decryption_key[:4]}{'*' * (len(decryption_key) - 8)}{decryption_key[-4:] if len(decryption_key) > 8 else ''}")
+              
+              # Test encryption to verify setup
+              log_info("Running test encryption with value '443'...")
+              test_encrypted = None
+              if tool_path and Path(tool_path).exists():
+                  test_encrypted = encrypt_with_mule_tool("443", decryption_key, tool_path)
+              if not test_encrypted:
+                  test_encrypted = encrypt_with_python_fallback("443", decryption_key)
+              
+              if test_encrypted:
+                  log_info(f"Test encryption result: ![{test_encrypted}]")
+                  log_info("Compare this with manual encryption of '443' using same key")
+              else:
+                  log_error("Test encryption failed!")
               
               # Load all environment variables (GitHub Secrets) that might be secrets
               secrets_dict = {}
@@ -308,6 +456,9 @@ jobs:
         env:
           TARGET_ENV: ${{ env.TARGET_ENV }}
           DECRYPTION_KEY: ${{ secrets.DECRYPTION_KEY }}
+          SECURE_TOOL_PATH: ${{ env.SECURE_TOOL_PATH }}
+          NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
           BOS_HOST: ${{ secrets.BOS_HOST }}
           BOS_PORT: ${{ secrets.BOS_PORT }}
           # All environment variables are automatically available
