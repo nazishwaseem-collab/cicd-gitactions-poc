@@ -210,6 +210,22 @@ jobs:
                   print(f"{k}: {v}")
               print("=================================================\n")
 
+              # DEBUG BLOCK (REMOVE LATER)
+              print("\n========== DEBUG: Encrypted values written to file ==========")
+              with open(secure_file, "r") as f:
+                  loaded_yaml = yaml.safe_load(f)
+
+              def walk(node, path=""):
+                  if isinstance(node, dict):
+                      for k, v in node.items():
+                          new_path = f"{path}.{k}" if path else k
+                          if isinstance(v, str) and v.startswith("!["):
+                              print(f"  {new_path} = {v}")
+                          else:
+                              walk(v, new_path)
+
+              walk(loaded_yaml)
+              print("========== END DEBUG OUTPUT ==========\n")
               print("\n================ ENCRYPTION SUMMARY ================")
               print(f"Environment: {env}")
               print(f"Secure file: {secure_file}")
