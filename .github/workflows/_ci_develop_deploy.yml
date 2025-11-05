@@ -47,7 +47,7 @@ jobs:
           echo "ORG_ID=${{ secrets.ORG_ID }}" >> $GITHUB_ENV
           echo "CONNECTED_APP_CLIENT_ID=${{ secrets.CONNECTED_APP_CLIENT_ID }}" >> $GITHUB_ENV
           echo "CONNECTED_APP_CLIENT_SECRET=${{ secrets.CONNECTED_APP_CLIENT_SECRET }}" >> $GITHUB_ENV
-          echo "ANYPOINT_PLATFORM_CLIENT_ID=${{ secrets.ANYPOINT_PLATFORM__CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ANYPOINT_PLATFORM_CLIENT_ID=${{ secrets.ANYPOINT_PLATFORM_CLIENT_ID }}" >> $GITHUB_ENV
           echo "ANYPOINT_PLATFORM_CLIENT_SECRET=${{ secrets.ANYPOINT_PLATFORM_CLIENT_SECRET }}" >> $GITHUB_ENV
           echo "DECRYPTION_KEY=${{ secrets.DECRYPTION_KEY }}" >> $GITHUB_ENV
           echo "NEXUS_USERNAME=${{ secrets.NEXUS_USERNAME }}" >> $GITHUB_ENV
@@ -312,6 +312,7 @@ jobs:
       - name: Upload to Exchange
         run: |
           echo "Publishing SNAPSHOT version to Exchange..."
+          echo "mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}""
           mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
 
       # API Management
