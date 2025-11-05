@@ -209,6 +209,21 @@ jobs:
               for k, v in stats.items():
                   print(f"{k}: {v}")
               print("=================================================\n")
+              # DEBUG BLOCK (REMOVE LATER)
+              print("\nDEBUG: Encrypted values written to file:")
+              for k, v in secrets_dict.items():
+                  yaml_key = k.lower().replace('_', '.')
+                  def find_value(node, key_path):
+                      if isinstance(node, dict):
+                          for kk, vv in node.items():
+                              new_path = f"{key_path}.{kk}" if key_path else kk
+                              if isinstance(vv, str) and vv.startswith("!["):
+                                  if new_path.replace('.', '_').upper() == k:
+                                      print(f"  {new_path} = {vv}")
+                              else:
+                                  find_value(vv, new_path)
+                  find_value(data, "")
+              print("END OF DEBUG OUTPUT\n")
 
               print("\n================ ENCRYPTION SUMMARY ================")
               print(f"Environment: {env}")
