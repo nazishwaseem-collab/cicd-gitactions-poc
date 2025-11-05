@@ -114,161 +114,89 @@ jobs:
       - name: Encrypt All Secure Properties (Generic)
         run: |
           python3 << 'ENCRYPT_SCRIPT'
-          import yaml
           import os
-          import sys
           import subprocess
-          from pathlib import Path
-          
-          def log_info(msg):
-              print(f"INFO: {msg}")
-          
-          def log_success(msg):
-              print(f"SUCCESS: {msg}")
-          
-          def log_error(msg):
-              print(f"ERROR: {msg}", file=sys.stderr)
-          
-          def log_warn(msg):
-              print(f"WARN: {msg}")
-          
-          def encrypt_with_jar(plaintext, key, tool_path):
-              try:
-                  # invoke the tool using classpath and the documented main class
-                  cmd = [
-                      'java', '-cp', tool_path,
-                      'com.mulesoft.tools.SecurePropertiesTool',
-                      'string', 'encrypt', 'AES', 'CBC',
-                      key, plaintext
-                  ]
-                  result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        
-                  if result.returncode != 0:
-                      print("----- JAVA STDOUT -----")
-                      print(result.stdout)
-                      print("----- JAVA STDERR -----")
-                      print(result.stderr)
-                      raise Exception(f"Java exited with code {result.returncode}")
-                  encrypted = result.stdout.strip()
-                  return encrypted if encrypted else None
-        
-              except Exception as e:
-                  log_error(f"Encryption failed: {str(e)}")
-                  return None
-          
-          def find_and_encrypt_secrets(data, path="", secrets_dict=None, key=None, tool_path=None, count=[0]):
-              if secrets_dict is None:
-                  secrets_dict = {}
-              
-              if isinstance(data, dict):
-                  for k, v in data.items():
-                      current_path = f"{path}.{k}" if path else k
-                      
-                      if isinstance(v, str):
-                          patterns = ['host', 'port', 'password', 'username', 'user', 'secret', 'key', 'token', 'credential', 'pwd']
-                          should_encrypt = any(p in k.lower() for p in patterns)
-                          
-                          if should_encrypt:
-                              secret_key = current_path.upper().replace('.', '_')
-                              log_info(f"Found: {current_path} looking for {secret_key}")
-                              
-                              if secret_key in secrets_dict and secrets_dict[secret_key]:
-                                  plaintext_value = secrets_dict[secret_key]
-                                  log_info(f"  Encrypting {current_path}")
-                                  
-                                  encrypted_value = encrypt_with_jar(plaintext_value, key, tool_path)
-                                  
-                                  if encrypted_value:
-                                      data[k] = f"![{encrypted_value}]"
-                                      count[0] += 1
-                                      log_success(f"  Encrypted: {current_path}")
-                                  else:
-                                      log_error(f"  Failed: {current_path}")
-                              else:
-                                  log_warn(f"  Secret {secret_key} not found - skipping")
-                      
-                      elif isinstance(v, dict):
-                          find_and_encrypt_secrets(v, current_path, secrets_dict, key, tool_path, count)
-          
-          def main():
-              env = os.getenv('TARGET_ENV', 'DEV')
-              # ensure uppercase env mapping for your files (DEV/UAT/PROD)
-              env_up = env.upper()
-              secure_file = f'src/main/resources/properties/config-secure-{env_up}.yaml'
-              
-              log_info(f"Starting encryption for {env_up}")
-              log_info(f"File: {secure_file}")
-              
-              if not Path(secure_file).exists():
-                  log_error(f"File not found: {secure_file}")
-                  sys.exit(1)
-              
-              key = os.getenv('DECRYPTION_KEY')
-              tool_path = os.getenv('SECURE_TOOL_PATH')
-              
-              if not key:
-                  log_error("DECRYPTION_KEY not set")
-                  sys.exit(1)
-              
-              if not tool_path or not Path(tool_path).exists():
-                  log_error(f"JAR not found: {tool_path}")
-                  sys.exit(1)
-              
-              secrets_dict = {k: v for k, v in os.environ.items() if k.isupper() and v}
-              log_info(f"Loaded {len(secrets_dict)} secrets")
-              
-              backup_file = f"{secure_file}.backup"
-              Path(secure_file).replace(backup_file)
-              log_info(f"Backup: {backup_file}")
-              
-              with open(backup_file, 'r') as f:
-                  data = yaml.safe_load(f)
-              
-              if not data:
-                  log_error("YAML empty or invalid")
-                  sys.exit(1)
-              
-              log_info("Scanning properties")
-              count = [0]
-              find_and_encrypt_secrets(data, "", secrets_dict, key, tool_path, count)
-              
-              with open(secure_file, 'w') as f:
-                  yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-              
-              # DEBUG BLOCK (REMOVE LATER)
-              print("\nDEBUG: Encrypted values written to file:")
-              for k, v in secrets_dict.items():
-                  yaml_key = k.lower().replace('_', '.')
-                  def find_value(node, key_path):
-                      if isinstance(node, dict):
-                          for kk, vv in node.items():
-                              new_path = f"{key_path}.{kk}" if key_path else kk
-                              if isinstance(vv, str) and vv.startswith("!["):
-                                  if new_path.replace('.', '_').upper() == k:
-                                      print(f"  {new_path} = {vv}")
-                              else:
-                                  find_value(vv, new_path)
-                  find_value(data, "")
-              print("END OF DEBUG OUTPUT\n")
+          import yaml
+          import sys
 
-              log_success(f"Complete! Encrypted: {count[0]}")
-              
-              print("\n" + "="*60)
-              print("ENCRYPTION SUMMARY")
-              print("="*60)
-              print(f"Environment: {env_up}")
-              print(f"File: {secure_file}")
-              print(f"Properties: {count[0]} encrypted")
-              print(f"Status: SUCCESS")
-              print("="*60)
-          
-          if __name__ == "__main__":
-              try:
-                  main()
-              except Exception as e:
-                  log_error(f"Error: {str(e)}")
-                  sys.exit(1)
-          
+          ENV = os.environ.get("TARGET_ENV")
+          if not ENV:
+              print("ERROR: TARGET_ENV is not set")
+              sys.exit(1)
+
+          secure_file = f"src/main/resources/properties/config-secure-{ENV}.yaml"
+
+          if not os.path.exists(secure_file):
+              print(f"INFO: No secure file found for environment: {secure_file}")
+              sys.exit(0)
+
+          JAR_PATH = "/tmp/mule-tools/secure-properties-tool.jar"
+          KEY = os.environ.get("MULE_KEY")
+
+          if not KEY:
+              print("ERROR: MULE_KEY is not set. Cannot encrypt.")
+              sys.exit(1)
+
+          with open(secure_file, "r") as f:
+              data = yaml.safe_load(f)
+
+          encrypted_count = 0
+          skipped_count = 0
+          missing_env_vars = []
+
+          def to_env_name(key_path):
+              return key_path.upper().replace(".", "_")
+
+          def encrypt_value(value):
+              cmd = [
+                  "java", "-jar", JAR_PATH,
+                  "string", "encrypt",
+                  "AES", value,
+                  "--key", KEY
+              ]
+              result = subprocess.run(cmd, capture_output=True, text=True)
+              if result.returncode != 0:
+                  return None
+              return result.stdout.strip()
+
+          def process_dict(d, path=""):
+              nonlocal encrypted_count, skipped_count, missing_env_vars
+              for k, v in d.items():
+                  full_key = f"{path}.{k}" if path else k
+                  if isinstance(v, dict):
+                      process_dict(v, full_key)
+                  else:
+                      env_var = to_env_name(full_key)
+                      env_val = os.environ.get(env_var)
+                      if env_val:
+                          encrypted = encrypt_value(env_val)
+                          if encrypted:
+                              print(f"Encrypting {full_key}")
+                              d[k] = encrypted
+                              encrypted_count += 1
+                      else:
+                          print(f"Skipping {full_key} (no env var {env_var})")
+                          skipped_count += 1
+                          missing_env_vars.append(env_var)
+
+          process_dict(data)
+
+          with open(secure_file, "w") as f:
+              yaml.dump(data, f, default_flow_style=False)
+
+          print("\n============================================================")
+          print("ENCRYPTION SUMMARY")
+          print("============================================================")
+          print(f"Environment: {ENV}")
+          print(f"File: {secure_file}")
+          print(f"Encrypted: {encrypted_count}")
+          print(f"Skipped (no env var found): {skipped_count}")
+          if missing_env_vars:
+              print("Missing env vars:")
+              for m in sorted(set(missing_env_vars)):
+                  print(f"  - {m}")
+          print("============================================================")
+
           ENCRYPT_SCRIPT
         env:
           TARGET_ENV: ${{ env.TARGET_ENV }}
