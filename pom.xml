@@ -160,17 +160,17 @@
 			<scope>test</scope>
 		</dependency>
 		<dependency>
-			<groupId>ed6db8fe-fb50-4895-b773-ea82ad95798c</groupId>
-			<artifactId>git-actions-cicd-poc</artifactId>
-			<version>1.0.0</version>
-			<classifier>raml</classifier>
-			<type>zip</type>
-		</dependency>
-		<dependency>
 			<groupId>org.mule.modules</groupId>
 			<artifactId>mule-apikit-module</artifactId>
 			<version>1.11.3</version>
 			<classifier>mule-plugin</classifier>
+		</dependency>
+		<dependency>
+			<groupId>cdfa1988-3a90-4b73-98ba-5c388a10f44f</groupId>
+			<artifactId>cicd-gitactions-poc</artifactId>
+			<version>1.0.0</version>
+			<classifier>raml</classifier>
+			<type>zip</type>
 		</dependency>
 	</dependencies>
 

@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<mule xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd 
-http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
+<mule xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd  http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
     <http:listener-config name="HTTP_Listener_config">
-        <http:listener-connection host="0.0.0.0" port="${https.port}" readTimeout="${https.timeout.readTimeOutInMillisec}"/>
+        <http:listener-connection host="0.0.0.0" port="${https.port}" readTimeout="${https.timeout.readTimeOutInMillisec}" />
     </http:listener-config>
     <apikit:config name="cicd-gitactions-poc-config" api="resource::cdfa1988-3a90-4b73-98ba-5c388a10f44f:cicd-gitactions-poc:1.0.0:raml:zip:cicd-gitactions-poc.raml" outboundHeadersMapName="outboundHeaders" httpStatusVarName="httpStatus" />
-    <secure-properties:config name="Secure_Properties_Config" doc:name="Secure Properties Config" doc:id="368a810d-b17b-410a-a852-4194c064f729" file="properties/config-secure-${env}.yaml" key="${mule.encryptionKey}"/>
-	<configuration-properties doc:name="Configuration properties" doc:id="7fc54205-f9d4-4045-bf21-55a98bf6f63b" file="properties/config-${env}.yaml"/>
-	<flow name="cicd-gitactions-poc-main">
+    <secure-properties:config name="Secure_Properties_Config" doc:name="Secure Properties Config" doc:id="368a810d-b17b-410a-a852-4194c064f729" file="properties/config-secure-${env}.yaml" key="${mule.encryptionKey}" />
+    <configuration-properties doc:name="Configuration properties" doc:id="7fc54205-f9d4-4045-bf21-55a98bf6f63b" file="properties/config-${env}.yaml" />
+    <flow name="cicd-gitactions-poc-main">
         <http:listener config-ref="HTTP_Listener_config" path="/api/v1/*">
             <http:response statusCode="#[vars.httpStatus default 200]">
                 <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
@@ -126,7 +125,7 @@ output application/json
             </on-error-propagate>
         </error-handler>
     </flow>
-	<flow name="get:\ping:cicd-gitactions-poc-config">
-		<flow-ref doc:name="Flow Reference to ping-implementation-flow" doc:id="043bf0a2-4ef7-4f49-b736-21b66a375c41" name="ping-implementation-flow"/>
+    <flow name="get:\ping:cicd-gitactions-poc-config">
+        <flow-ref doc:name="Flow Reference to ping-implementation-flow" doc:id="043bf0a2-4ef7-4f49-b736-21b66a375c41" name="ping-implementation-flow" />
     </flow>
 </mule>
