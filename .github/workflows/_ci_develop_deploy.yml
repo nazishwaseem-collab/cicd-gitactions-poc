@@ -82,7 +82,7 @@ jobs:
           echo "Downloading Mule Secure Properties Tool..."
           mkdir -p /tmp/mule-tools
           cd /tmp/mule-tools
-          wget -q https://docs.mulesoft.com/downloads/mule-runtime/4.4/secure-properties-tool.jar -O secure-properties-tool.jar
+          wget -q https://docs.mulesoft.com/mule-runtime/latest/_attachments/secure-properties-tool-j17.jar -O secure-properties-tool.jar
           if [ ! -f "secure-properties-tool.jar" ] || [ ! -s "secure-properties-tool.jar" ]; then
             echo "Failed to download from primary URL, trying alternative..."
             wget -q https://repository.mulesoft.org/nexus/content/repositories/releases/com/mulesoft/anypoint/mule-secure-configuration-property-module/1.2.7/mule-secure-configuration-property-module-1.2.7.jar -O secure-properties-tool.jar --user "${NEXUS_USERNAME}:${NEXUS_PASSWORD}"
