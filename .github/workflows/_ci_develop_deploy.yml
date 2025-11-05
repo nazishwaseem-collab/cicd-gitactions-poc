@@ -89,7 +89,7 @@ jobs:
             exit 1
           fi
           echo "SECURE_TOOL_PATH=/tmp/mule-tools/secure-properties-tool.jar" >> $GITHUB_ENV
-          echo "Mule Secure Properties Tool downloaded successfully"
+          echo " Mule Secure Properties Tool downloaded successfully"
           ls -lh secure-properties-tool.jar
           file secure-properties-tool.jar
 
@@ -103,16 +103,16 @@ jobs:
           from pathlib import Path
           
           def log_info(msg):
-              print(f" {msg}")
+              print(f"INFO: {msg}")
           
           def log_success(msg):
-              print(f" {msg}")
+              print(f"SUCCESS: {msg}")
           
           def log_error(msg):
-              print(f" {msg}", file=sys.stderr)
+              print(f"ERROR: {msg}", file=sys.stderr)
           
           def log_warn(msg):
-              print(f"  {msg}")
+              print(f"WARN: {msg}")
           
           def encrypt_with_mule_tool(plaintext, key, tool_path):
               """
@@ -125,7 +125,7 @@ jobs:
                   import tempfile
                   import shutil
                   
-                  log_info(f" Using JAR tool: {tool_path}")
+                  log_info(f"Using JAR tool: {tool_path}")
                   
                   # Method 1: Try standard JAR execution
                   cmd = ['java', '-jar', tool_path, 'string', 'encrypt', 'AES', 'CBC', plaintext, key]
@@ -183,14 +183,14 @@ jobs:
                           result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
                           
                           if result.returncode == 0 and result.stdout.strip():
-                              log_success(f" Success with class: {class_name}")
+                              log_success(f"Success with class: {class_name}")
                               return parse_jar_output(result.stdout)
                       
                   finally:
                       # Clean up temp directory
                       shutil.rmtree(temp_dir, ignore_errors=True)
                   
-                  log_warn(f" All JAR execution methods failed")
+                  log_warn(f"All JAR execution methods failed")
                   if result.stderr:
                       log_error(f"   Last error: {result.stderr[:200]}")
                   
@@ -200,10 +200,10 @@ jobs:
                   log_error("JAR encryption timeout (>30s)")
                   return None
               except FileNotFoundError:
-                  log_error(" Java not found in PATH - ensure Java 17+ is installed")
+                  log_error("Java not found in PATH - ensure Java 17+ is installed")
                   return None
               except Exception as e:
-                  log_error(f" JAR tool exception: {str(e)}")
+                  log_error(f"JAR tool exception: {str(e)}")
                   import traceback
                   log_error(traceback.format_exc())
                   return None
@@ -219,7 +219,7 @@ jobs:
                       # Check if it's mostly base64 characters
                       base64_chars = sum(1 for c in line if c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
                       if base64_chars / len(line) > 0.9:  # At least 90% base64 chars
-                          log_success(f" JAR encryption successful")
+                          log_success(f"JAR encryption successful")
                           log_info(f"   Encrypted value: ![{line[:30]}...]")
                           return line
               
@@ -243,7 +243,7 @@ jobs:
                   import base64
                   import hashlib
                   
-                  log_info(" Using Python-based encryption")
+                  log_info("Using Python-based encryption")
                   
                   # Method 1: Try simple MD5 hash (older Mule versions)
                   try:
@@ -306,21 +306,21 @@ jobs:
                       log_success(f"Using Method 1 (MD5) encryption")
                       return encrypted_b64_md5
                   elif encrypted_b64_pbkdf2:
-                      log_success(f" Using Method 2 (PBKDF2) encryption")
+                      log_success(f"Using Method 2 (PBKDF2) encryption")
                       return encrypted_b64_pbkdf2
                   elif encrypted_b64_direct:
-                      log_success(f" Using Method 3 (Direct) encryption")
+                      log_success(f"Using Method 3 (Direct) encryption")
                       return encrypted_b64_direct
                   else:
-                      log_error(" All encryption methods failed")
+                      log_error("All encryption methods failed")
                       return None
                   
               except ImportError as e:
-                  log_error(f" Required crypto library not available: {e}")
+                  log_error(f"Required crypto library not available: {e}")
                   log_error("Please ensure pycryptodome is installed")
                   return None
               except Exception as e:
-                  log_error(f" Python encryption failed: {str(e)}")
+                  log_error(f"Python encryption failed: {str(e)}")
                   import traceback
                   log_error(traceback.format_exc())
                   return None
@@ -362,23 +362,23 @@ jobs:
                                   
                                   # Use JAR tool if available
                                   if tool_path and Path(tool_path).exists():
-                                      log_info(f" Using JAR tool for encryption")
+                                      log_info(f"  Using JAR tool for encryption")
                                       encrypted_value = encrypt_with_mule_tool(plaintext_value, decryption_key, tool_path)
                                   else:
-                                      log_warn(f" JAR tool not found at: {tool_path}")
+                                      log_warn(f"  JAR tool not found at: {tool_path}")
                                   
                                   # Fallback to Python if JAR failed
                                   if not encrypted_value:
-                                      log_info(f" Using Python encryption")
+                                      log_info(f"  Using Python encryption")
                                       encrypted_value = encrypt_with_python_fallback(plaintext_value, decryption_key)
                                   
                                   if encrypted_value:
                                       # Update the value with encrypted format
                                       data[key] = f"![{encrypted_value}]"
                                       encrypted_count[0] += 1
-                                      log_success(f"  ✓ Encrypted: {current_path} = ![{encrypted_value[:20]}...]")
+                                      log_success(f"  Encrypted: {current_path} = ![{encrypted_value[:20]}...]")
                                   else:
-                                      log_error(f"  ✗ Failed to encrypt: {current_path}")
+                                      log_error(f"  Failed to encrypt: {current_path}")
                               else:
                                   log_warn(f"  Secret ${secret_key} not found in GitHub Secrets - skipping")
                       
@@ -413,6 +413,14 @@ jobs:
                   log_error("DECRYPTION_KEY environment variable not set")
                   sys.exit(1)
               
+              # Load all environment variables (GitHub Secrets) that might be secrets
+              secrets_dict = {}
+              for key, value in os.environ.items():
+                  # Capture all uppercase variables (potential secrets)
+                  if key.isupper() and value:
+                      secrets_dict[key] = value
+              
+              log_info(f"Loaded {len(secrets_dict)} potential secret variables from environment")
               log_info(f"Encryption key length: {len(decryption_key)} characters")
               log_info(f"Encryption key preview: {decryption_key[:4]}{'*' * (len(decryption_key) - 8)}{decryption_key[-4:] if len(decryption_key) > 8 else ''}")
               
@@ -429,9 +437,9 @@ jobs:
                   log_info(f"Test encryption result: ![{test_encrypted}]")
                   log_info(f"Expected from manual: ![9sYqHbh09s7Fx9nQ41S7oA==]")
                   if test_encrypted == "9sYqHbh09s7Fx9nQ41S7oA==":
-                      log_success(" MATCH! Encryption is working correctly!")
+                      log_success("MATCH! Encryption is working correctly!")
                   else:
-                      log_warn(" Values don't match - may need different encryption method")
+                      log_warn("Values don't match - may need different encryption method")
               else:
                   log_error("Test encryption failed!")
               
@@ -443,8 +451,6 @@ jobs:
                       secrets_dict[key] = value
               
               log_info(f"Loaded {len(secrets_dict)} potential secret variables from environment")
-              
-              # Create backup
               backup_file = f"{secure_file}.backup"
               if Path(secure_file).exists():
                   Path(secure_file).replace(backup_file)
@@ -479,7 +485,7 @@ jobs:
               
               # Display summary
               print("\n" + "="*60)
-              print(f" ENCRYPTION SUMMARY")
+              print(f"ENCRYPTION SUMMARY")
               print("="*60)
               print(f"Environment:     {env}")
               print(f"File:            {secure_file}")
