@@ -94,6 +94,23 @@ jobs:
           file secure-properties-tool.jar
 
       # Generic Encryption - Automatically detects and encrypts all secret properties
+      - name: Download Mule Secure Properties Tool
+        run: |
+          echo "Downloading Mule Secure Properties Tool (Java 17)..."
+          mkdir -p /tmp/mule-tools
+          cd /tmp/mule-tools
+          curl -sL https://docs.mulesoft.com/mule-runtime/latest/_attachments/secure-properties-tool.jar -o secure-properties-tool.jar
+          chmod +x secure-properties-tool.jar
+          if [ ! -f "secure-properties-tool.jar" ] || [ ! -s "secure-properties-tool.jar" ]; then
+            echo " Failed to download secure-properties-tool.jar"
+            ls -lah
+            exit 1
+          fi
+          echo "SECURE_TOOL_PATH=/tmp/mule-tools/secure-properties-tool.jar" >> $GITHUB_ENV
+          echo " Mule Secure Properties Tool downloaded successfully"
+          ls -lh secure-properties-tool.jar
+          file secure-properties-tool.jar
+
       - name: Encrypt All Secure Properties (Generic)
         run: |
           python3 << 'ENCRYPT_SCRIPT'
@@ -117,6 +134,7 @@ jobs:
           
           def encrypt_with_jar(plaintext, key, tool_path):
               try:
+                  # use the fat executable jar (downloads from MuleSoft docs)
                   cmd = ['java', '-jar', tool_path, 'string', 'encrypt', 'AES', 'CBC', plaintext, key]
                   result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         
@@ -237,6 +255,7 @@ jobs:
           BOS_PORT: ${{ secrets.BOS_PORT }}
           # All environment variables are automatically available
           # The script will detect and use any SECRET_NAME variables
+
 
       # Run MUnit Tests (80% coverage requirement)
       - name: Run MUnit Tests
