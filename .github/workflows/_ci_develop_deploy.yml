@@ -119,157 +119,111 @@ jobs:
           import sys
           import subprocess
           from pathlib import Path
-          
-          def log_info(msg):
-              print(f"INFO: {msg}")
-          
-          def log_success(msg):
-              print(f"SUCCESS: {msg}")
-          
-          def log_error(msg):
-              print(f"ERROR: {msg}", file=sys.stderr)
-          
-          def log_warn(msg):
-              print(f"WARN: {msg}")
-          
+
+          def log_info(msg): print(f"INFO: {msg}")
+          def log_success(msg): print(f"SUCCESS: {msg}")
+          def log_error(msg): print(f"ERROR: {msg}", file=sys.stderr)
+          def log_warn(msg): print(f"WARN: {msg}")
+
           def encrypt_with_jar(plaintext, key, tool_path):
               try:
-                  # invoke the tool using classpath and the documented main class
                   cmd = [
                       'java', '-cp', tool_path,
                       'com.mulesoft.tools.SecurePropertiesTool',
                       'string', 'encrypt', 'AES', 'CBC',
                       key, plaintext
                   ]
-                  result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        
+                  result = subprocess.run(cmd, capture_output=True, text=True)
                   if result.returncode != 0:
-                      print("----- JAVA STDOUT -----")
-                      print(result.stdout)
-                      print("----- JAVA STDERR -----")
-                      print(result.stderr)
-                      raise Exception(f"Java exited with code {result.returncode}")
-                  encrypted = result.stdout.strip()
-                  return encrypted if encrypted else None
-        
+                      log_error(result.stderr)
+                      return None
+                  return result.stdout.strip()
               except Exception as e:
                   log_error(f"Encryption failed: {str(e)}")
                   return None
-          
-          def find_and_encrypt_secrets(data, path="", secrets_dict=None, key=None, tool_path=None, count=[0]):
-              if secrets_dict is None:
-                  secrets_dict = {}
-              
-              if isinstance(data, dict):
-                  for k, v in data.items():
-                      current_path = f"{path}.{k}" if path else k
-                      
-                      if isinstance(v, str):
-                          patterns = ['host', 'port', 'password', 'username', 'user', 'secret', 'key', 'token', 'credential', 'pwd']
-                          should_encrypt = any(p in k.lower() for p in patterns)
-                          
-                          if should_encrypt:
-                              secret_key = current_path.upper().replace('.', '_')
-                              log_info(f"Found: {current_path} looking for {secret_key}")
-                              
-                              if secret_key in secrets_dict and secrets_dict[secret_key]:
-                                  plaintext_value = secrets_dict[secret_key]
-                                  log_info(f"  Encrypting {current_path}")
-                                  
-                                  encrypted_value = encrypt_with_jar(plaintext_value, key, tool_path)
-                                  
-                                  if encrypted_value:
-                                      data[k] = f"![{encrypted_value}]"
-                                      count[0] += 1
-                                      log_success(f"  Encrypted: {current_path}")
-                                  else:
-                                      log_error(f"  Failed: {current_path}")
+
+          def process_dict(node, path, secrets, key, tool_path, stats):
+              for k, v in node.items():
+                  full_path = f"{path}.{k}" if path else k
+
+                  if isinstance(v, str):
+                      patterns = ['host','port','password','username','user','secret','key','token','credential','pwd']
+                      if any(p in k.lower() for p in patterns):
+
+                          env_key = full_path.upper().replace('.', '_')
+                          log_info(f"Found property: {full_path} → looking for env var {env_key}")
+
+                          if env_key in secrets:
+                              encrypted = encrypt_with_jar(secrets[env_key], key, tool_path)
+                              if encrypted:
+                                  node[k] = f"![{encrypted}]"
+                                  stats["encrypted"] += 1
+                                  log_success(f"Encrypted: {full_path}")
                               else:
-                                  log_warn(f"  Secret {secret_key} not found - skipping")
-                      
-                      elif isinstance(v, dict):
-                          find_and_encrypt_secrets(v, current_path, secrets_dict, key, tool_path, count)
-          
+                                  stats["failed"].append(full_path)
+                                  log_error(f"Failed to encrypt: {full_path}")
+                          else:
+                              stats["skipped"].append(full_path)
+                              log_warn(f"❗ Missing env var {env_key} → value left unencrypted")
+
+                  elif isinstance(v, dict):
+                      process_dict(v, full_path, secrets, key, tool_path, stats)
+
           def main():
-              env = os.getenv('TARGET_ENV', 'DEV')
-              # ensure uppercase env mapping for your files (DEV/UAT/PROD)
-              env_up = env.upper()
-              secure_file = f'src/main/resources/properties/config-secure-{env_up}.yaml'
-              
-              log_info(f"Starting encryption for {env_up}")
-              log_info(f"File: {secure_file}")
-              
+              env = os.getenv('TARGET_ENV', 'DEV').upper()
+              secure_file = f"src/main/resources/properties/config-secure-{env}.yaml"
+
               if not Path(secure_file).exists():
-                  log_error(f"File not found: {secure_file}")
+                  log_error(f"Secure config file missing: {secure_file}")
                   sys.exit(1)
-              
+
               key = os.getenv('DECRYPTION_KEY')
               tool_path = os.getenv('SECURE_TOOL_PATH')
-              
-              if not key:
-                  log_error("DECRYPTION_KEY not set")
-                  sys.exit(1)
-              
-              if not tool_path or not Path(tool_path).exists():
-                  log_error(f"JAR not found: {tool_path}")
-                  sys.exit(1)
-              
-              secrets_dict = {k: v for k, v in os.environ.items() if k.isupper() and v}
-              log_info(f"Loaded {len(secrets_dict)} secrets")
-              
-              backup_file = f"{secure_file}.backup"
-              Path(secure_file).replace(backup_file)
-              log_info(f"Backup: {backup_file}")
-              
-              with open(backup_file, 'r') as f:
-                  data = yaml.safe_load(f)
-              
-              if not data:
-                  log_error("YAML empty or invalid")
-                  sys.exit(1)
-              
-              log_info("Scanning properties")
-              count = [0]
-              find_and_encrypt_secrets(data, "", secrets_dict, key, tool_path, count)
-              
-              with open(secure_file, 'w') as f:
-                  yaml.dump(data, f, default_flow_style=False, sort_keys=False)
-              
-              # DEBUG BLOCK (REMOVE LATER)
-              print("\nDEBUG: Encrypted values written to file:")
-              for k, v in secrets_dict.items():
-                  yaml_key = k.lower().replace('_', '.')
-                  def find_value(node, key_path):
-                      if isinstance(node, dict):
-                          for kk, vv in node.items():
-                              new_path = f"{key_path}.{kk}" if key_path else kk
-                              if isinstance(vv, str) and vv.startswith("!["):
-                                  if new_path.replace('.', '_').upper() == k:
-                                      print(f"  {new_path} = {vv}")
-                              else:
-                                  find_value(vv, new_path)
-                  find_value(data, "")
-              print("END OF DEBUG OUTPUT\n")
 
-              log_success(f"Complete! Encrypted: {count[0]}")
-              
-              print("\n" + "="*60)
-              print("ENCRYPTION SUMMARY")
-              print("="*60)
-              print(f"Environment: {env_up}")
-              print(f"File: {secure_file}")
-              print(f"Properties: {count[0]} encrypted")
-              print(f"Status: SUCCESS")
-              print("="*60)
-          
-          if __name__ == "__main__":
-              try:
-                  main()
-              except Exception as e:
-                  log_error(f"Error: {str(e)}")
+              if not key or not tool_path:
+                  log_error("Missing DECRYPTION_KEY or SECURE_TOOL_PATH")
                   sys.exit(1)
-          
+
+              secrets = {k: v for k, v in os.environ.items() if k.isupper()}
+              log_info(f"Loaded {len(secrets)} env variables")
+
+              backup = secure_file + ".backup"
+              Path(secure_file).replace(backup)
+              log_info(f"Backup created: {backup}")
+
+              data = yaml.safe_load(open(backup))
+
+              stats = {
+                  "encrypted": 0,
+                  "skipped": [],
+                  "failed": []
+              }
+
+              process_dict(data, "", secrets, key, tool_path, stats)
+
+              yaml.dump(data, open(secure_file, "w"), sort_keys=False)
+              log_success(f"Encrypted {stats['encrypted']} properties")
+
+              print("\n========== DEBUG OUTPUT (REMOVE LATER) ==========")
+              print(f"Encrypted keys written to: {secure_file}")
+              for k, v in stats.items():
+                  print(f"{k}: {v}")
+              print("=================================================\n")
+
+              print("\n================ ENCRYPTION SUMMARY ================")
+              print(f"Environment: {env}")
+              print(f"Secure file: {secure_file}")
+              print(f"Encrypted: {stats['encrypted']}")
+              print(f"Skipped (missing env vars): {len(stats['skipped'])}")
+              for s in stats["skipped"]: print(f"  - {s}")
+              print(f"Failed encryptions: {len(stats['failed'])}")
+              for f in stats["failed"]: print(f"  - {f}")
+              print("====================================================")
+
+          if __name__ == "__main__":
+              main()
           ENCRYPT_SCRIPT
+
         env:
           TARGET_ENV: ${{ env.TARGET_ENV }}
           DECRYPTION_KEY: ${{ secrets.DECRYPTION_KEY }}
