@@ -134,8 +134,13 @@ jobs:
           
           def encrypt_with_jar(plaintext, key, tool_path):
               try:
-                  # use the fat executable jar (downloads from MuleSoft docs)
-                  cmd = ['java', '-jar', tool_path, 'string', 'encrypt', 'AES', 'CBC', plaintext, key]
+                  # invoke the tool using classpath and the documented main class
+                  cmd = [
+                      'java', '-cp', tool_path,
+                      'com.mulesoft.tools.SecurePropertiesTool',
+                      'string', 'encrypt', 'AES', 'CBC',
+                      key, plaintext
+                  ]
                   result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         
                   if result.returncode != 0:
@@ -187,9 +192,11 @@ jobs:
           
           def main():
               env = os.getenv('TARGET_ENV', 'DEV')
-              secure_file = f'src/main/resources/properties/config-secure-{env}.yaml'
+              # ensure uppercase env mapping for your files (DEV/UAT/PROD)
+              env_up = env.upper()
+              secure_file = f'src/main/resources/properties/config-secure-{env_up}.yaml'
               
-              log_info(f"Starting encryption for {env}")
+              log_info(f"Starting encryption for {env_up}")
               log_info(f"File: {secure_file}")
               
               if not Path(secure_file).exists():
@@ -233,7 +240,7 @@ jobs:
               print("\n" + "="*60)
               print("ENCRYPTION SUMMARY")
               print("="*60)
-              print(f"Environment: {env}")
+              print(f"Environment: {env_up}")
               print(f"File: {secure_file}")
               print(f"Properties: {count[0]} encrypted")
               print(f"Status: SUCCESS")
