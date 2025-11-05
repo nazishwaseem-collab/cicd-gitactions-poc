@@ -117,7 +117,7 @@ jobs:
           
           def encrypt_with_jar(plaintext, key, tool_path):
               try:
-                  cmd = ['java', '-cp', tool_path, 'com.mulesoft.modules.crypto.tool.SecurePropertiesTool', 'string', 'encrypt', 'AES', 'CBC', plaintext, key]
+                  cmd = ['java', '-jar', tool_path, 'string', 'encrypt', 'AES', 'CBC', plaintext, key]
                   result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=True)
                   encrypted = result.stdout.strip()
                   if encrypted:
