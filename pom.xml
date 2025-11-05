@@ -234,16 +234,17 @@
 	</pluginRepositories>
 
 	<distributionManagement>
-		<repository>
-			<id>Repository</id>
-			<name>Corporate Repository</name>
-			<url>https://maven.anypoint.mulesoft.com/api/v3/organizations/${project.groupId}/maven</url>
-			<layout>default</layout>
-		</repository>
-		<snapshotRepository>
-			<id>nexus-snapshots</id>
-			<name>Nexus Snapshots</name>
-			<url>https://repository.mulesoft.org/nexus-ee/content/repositories/snapshots-ee</url>
-		</snapshotRepository>
-	</distributionManagement>
+    <repository>
+        <id>Repository</id>
+        <name>Corporate Repository</name>
+        <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/${project.groupId}/maven</url>
+        <layout>default</layout>
+    </repository>
+    <snapshotRepository>
+        <id>Repository</id>
+        <name>Corporate Repository Snapshots</name>
+        <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/${project.groupId}/maven</url>
+        <layout>default</layout>
+    </snapshotRepository>
+</distributionManagement>
 </project>
