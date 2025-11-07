@@ -54,7 +54,7 @@
 						<server>Repository</server>
 						<!-- Dynamic app name constructed from profile prefix + artifactId -->
 						<applicationName>${app.name.prefix}-${project.artifactId}</applicationName>
-						<releaseChannel>EDGE</releaseChannel>
+						<releaseChannel>LTS</releaseChannel>
 						<replicas>${cloudhub.replicas}</replicas>
 						<vCores>${cloudhub.vcores}</vCores>
 						<connectedAppClientId>${connected.app.client.id}</connectedAppClientId>
