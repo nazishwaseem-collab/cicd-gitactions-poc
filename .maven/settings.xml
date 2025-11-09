@@ -108,6 +108,8 @@
 				<!--  UAT-specific deployment config  -->
 				<cloudhub.replicas>1</cloudhub.replicas>
 				<cloudhub.vcores>0.1</cloudhub.vcores>
+				<!-- Add this for Maven Release Plugin -->
+				<project.scm.url>https://github.com/nazishwaseem-collab/cicd-gitactions-poc</project.scm.url>
 				<!--  API Manager properties  -->
 				<api.manager.endpoint.uri>https://${app.name.prefix}-${project.artifactId}.${cloudhub.domain.suffix}</api.manager.endpoint.uri>
 				<api.manager.deployment.type>cloudhub2</api.manager.deployment.type>

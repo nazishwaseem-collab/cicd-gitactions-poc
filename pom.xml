@@ -117,6 +117,26 @@
 					</systemPropertyVariables>
 				</configuration>
 			</plugin>
+		<!-- Maven Release Plugin for formal UAT/PROD releases -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-release-plugin</artifactId>
+				<version>3.0.1</version>
+				<configuration>
+					<!-- Tag format: version number only (e.g., 1.0.0-rc1) -->
+					<tagNameFormat>@{project.version}</tagNameFormat>
+					<autoVersionSubmodules>true</autoVersionSubmodules>
+					<!-- Use UAT profile for release builds -->
+					<releaseProfiles>UAT</releaseProfiles>
+					<goals>deploy</goals>
+					<!-- Skip modification checks for pom.xml -->
+					<checkModificationExcludes>
+						<checkModificationExclude>pom.xml</checkModificationExclude>
+					</checkModificationExcludes>
+					<!-- Arguments passed to Maven during release:prepare and release:perform -->
+					<arguments>-DskipMunitTests</arguments>
+				</configuration>
+			</plugin>
 		</plugins>
 	</build>
 
@@ -247,4 +267,11 @@
         <layout>default</layout>
     </snapshotRepository>
 </distributionManagement>
+<!-- SCM Configuration for Maven Release Plugin -->
+	<scm>
+		<connection>scm:git:${project.scm.url}</connection>
+		<developerConnection>scm:git:${project.scm.url}</developerConnection>
+		<url>${project.scm.url}</url>
+		<tag>HEAD</tag>
+	</scm>
 </project>
