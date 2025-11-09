@@ -556,12 +556,6 @@ jobs:
           echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
           echo "$API_INSTANCE_ID" > api_instance_id.txt
 
-      - name: Apply Policies to UAT API Instance
-        run: |
-          API_INSTANCE_ID=$(cat api_instance_id.txt)
-          echo "Applying policies to API Instance ID: ${API_INSTANCE_ID}"
-          echo "Policy application placeholder - implement based on your policy requirements"
-
       - name: Deploy Release Candidate to UAT
         run: |
           API_INSTANCE_ID=$(cat api_instance_id.txt)
