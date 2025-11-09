@@ -15,5 +15,5 @@ anypoint:
     client_secret: "${anypoint.platform.client_secret}"
 
 api:
-  id: "${api.id}"
+  id: "${api.id}" 
 
