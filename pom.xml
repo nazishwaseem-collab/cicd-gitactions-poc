@@ -269,9 +269,9 @@
 </distributionManagement>
 <!-- SCM Configuration for Maven Release Plugin -->
 	<scm>
-		<connection>scm:git:${project.scm.url}</connection>
-		<developerConnection>scm:git:${project.scm.url}</developerConnection>
-		<url>${project.scm.url}</url>
-		<tag>HEAD</tag>
-	</scm>
+    <connection>scm:git:https://github.com/nazishwaseem-collab/cicd-gitactions-poc.git</connection>
+    <developerConnection>scm:git:https://github.com/nazishwaseem-collab/cicd-gitactions-poc.git</developerConnection>
+    <url>https://github.com/nazishwaseem-collab/cicd-gitactions-poc</url>
+    <tag>HEAD</tag>
+  </scm>
 </project>
