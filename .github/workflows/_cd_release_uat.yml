@@ -522,6 +522,17 @@ jobs:
           BOS_HOST: ${{ secrets.BOS_HOST }}
           BOS_PORT: ${{ secrets.BOS_PORT }}
 
+      - name: Commit Encrypted Properties
+        run: |
+          echo "Committing encrypted properties before release:prepare..."
+          git add src/main/resources/properties/config-secure-*.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit for encrypted properties"
+          else
+            git commit -m "chore: Update encrypted properties for UAT release"
+            echo "Encrypted properties committed successfully"
+          fi
+
       - name: Execute Maven Release Prepare
         run: |
           echo "Executing Maven Release Prepare - creating local tag and version bump..."
