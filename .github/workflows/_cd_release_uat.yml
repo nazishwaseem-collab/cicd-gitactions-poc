@@ -575,8 +575,39 @@ jobs:
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
           RELEASE_VERSION=$(echo "${{ env.RELEASE_TAG }}" | sed 's/^v//')
           BASE_VERSION=$(echo "${RELEASE_VERSION}" | sed 's/-rc[0-9]*$//')
+          echo "Managing API for formal release: ${REPO_NAME} version ${BASE_VERSION}"
           ENDPOINT_URI=$(mvn help:evaluate -Dexpression=api.manager.endpoint.uri -q -DforceStdout -P${TARGET_ENV})
           DEPLOYMENT_TYPE=$(mvn help:evaluate -Dexpression=api.manager.deployment.type -q -DforceStdout -P${TARGET_ENV})
           API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
           API_SCHEME=$(mvn help:evaluate -Dexpression=api.manager.scheme -q -DforceStdout -P${TARGET_ENV})
-          API_PORT=$(mvn help:evaluate -Dexpression=api.manager.port -q -D
+          API_PORT=$(mvn help:evaluate -Dexpression=api.manager.port -q -DforceStdout -P${TARGET_ENV})
+          echo "API Configuration: Endpoint=${ENDPOINT_URI}, Type=${DEPLOYMENT_TYPE}, Path=${API_PATH}, Scheme=${API_SCHEME}, Port=${API_PORT}"
+          API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id' || echo "")
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            echo "Creating new API instance for release candidate..."
+            CREATE_OUTPUT=$(anypoint-cli-v4 api-mgr:api:manage "$REPO_NAME" "$BASE_VERSION" --environment "${ANYPOINT_ENV}" --deploymentType "$DEPLOYMENT_TYPE" --endpointUri "$ENDPOINT_URI" --path "$API_PATH" --scheme "$API_SCHEME" --port "$API_PORT" --muleVersion4OrAbove --output json 2>&1)
+            API_INSTANCE_ID=$(echo "$CREATE_OUTPUT" | jq -r '.id // .apiInstanceId // empty' 2>/dev/null || echo "")
+            if [ -z "$API_INSTANCE_ID" ]; then
+              sleep 5
+              API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id')
+            fi
+          else
+            echo "API instance already exists with ID: ${API_INSTANCE_ID}"
+          fi
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            echo "ERROR: Failed to create or find API instance"
+            exit 1
+          fi
+          echo "Successfully obtained API Instance ID: ${API_INSTANCE_ID}"
+          echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
+          echo "$API_INSTANCE_ID" > api_instance_id.txt
+
+      - name: Deploy Release Candidate to UAT
+        run: |
+          API_INSTANCE_ID=$(cat api_instance_id.txt)
+          echo "Deploying release candidate to UAT with API ID ${API_INSTANCE_ID}"
+          echo "env=${TARGET_ENV}" > cloudhub-properties.txt
+          echo "api.id=${API_INSTANCE_ID}" >> cloudhub-properties.txt
+          echo "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" >> cloudhub-properties.txt
+          echo "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" >> cloudhub-properties.txt
+          mvn -B mule:deploy -s .maven/settings.xml -P${TARGET_ENV} -DmuleDeploy -DskipMunitTests -Danypoint.organization=${ORG_ID} -Danypoint.environment="${ANYPOINT_ENV}" -
