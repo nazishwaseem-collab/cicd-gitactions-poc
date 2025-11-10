@@ -557,7 +557,22 @@ jobs:
       - name: Upload to Exchange
         run: |
           echo "Publishing release candidate to Exchange..."
-          mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+          set +e
+          mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}" 2>&1 | tee /tmp/exchange-deploy.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          if [ ${EXIT_CODE} -ne 0 ]; then
+            if grep -q "An asset already exists with this version" /tmp/exchange-deploy.log; then
+              echo "WARNING: Asset version ${{ env.RELEASE_TAG }} already exists in Exchange"
+              echo "Skipping upload - this is expected for redeployments of the same release candidate"
+            else
+              echo "ERROR: Exchange deployment failed with exit code ${EXIT_CODE}"
+              cat /tmp/exchange-deploy.log
+              exit ${EXIT_CODE}
+            fi
+          else
+            echo "Successfully published artifact to Exchange"
+          fi
 
       - name: Install Anypoint CLI
         run: |
