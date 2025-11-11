@@ -270,9 +270,9 @@ jobs:
           echo "Version: ${{ env.CURRENT_VERSION }}"
           echo "JAR: ${{ env.JAR_BASENAME }}"
           echo "This is an iterative bugfix deployment - deploying local JAR directly to CloudHub"
-          
-          anypoint-cli-v4 runtime-mgr:cloudhub-application:deploy "${APP_NAME}" "${{ env.JAR_FILE }}" --organization cdfa1988-3a90-4b73-98ba-5c388a10f44f --host anypoint.mulesoft.com --environment "${ANYPOINT_ENV}" --workers 1 --workerSize 0.1 --region us-east-2 --runtime 4.9.0 --property "anypoint.platform.client_id:${ANYPOINT_PLATFORM_CLIENT_ID}" --property "anypoint.platform.client_secret:${ANYPOINT_PLATFORM_CLIENT_SECRET}" --property "api.id:${API_INSTANCE_ID}" --property "env:${TARGET_ENV}" --property "mule.key:${DECRYPTION_KEY}"
-          
+          echo "anypoint-cli-v4 runtime-mgr:cloudhub2:application:deploy --organization "${ORG_ID}" --environment "${ANYPOINT_ENV}" --name "${APP_NAME}" --target "Cloudhub-US-East-2" --runtime "4.9.0" --replicas 1 --cores 0.1 --jar "${{ env.JAR_FILE }}" --property "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" --property "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" --property "api.id=${API_INSTANCE_ID}" --property "env=${TARGET_ENV}" --property "mule.key=${DECRYPTION_KEY}" --property "bos.host=${BOS_HOST}" --property "bos.port=${BOS_PORT}""
+          anypoint-cli-v4 runtime-mgr:cloudhub2:application:deploy --organization "${ORG_ID}" --environment "${ANYPOINT_ENV}" --name "${APP_NAME}" --target "Cloudhub-US-East-2" --runtime "4.9.0" --replicas 1 --cores 0.1 --jar "${{ env.JAR_FILE }}" --property "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" --property "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" --property "api.id=${API_INSTANCE_ID}" --property "env=${TARGET_ENV}" --property "mule.key=${DECRYPTION_KEY}" --property "bos.host=${BOS_HOST}" --property "bos.port=${BOS_PORT}"
+
       - name: Deployment Summary
         run: |
           echo "========================================="
