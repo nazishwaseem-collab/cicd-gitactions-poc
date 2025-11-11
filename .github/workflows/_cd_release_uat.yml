@@ -249,6 +249,10 @@ jobs:
           echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
           echo "$API_INSTANCE_ID" > api_instance_id.txt
 
+      - name: Authenticate to Anypoint Platform
+        run: |
+          anypoint-cli-v4 login --username "${ANYPOINT_USERNAME}" --password "${ANYPOINT_PASSWORD}" --organization "${ORG_ID}" --environment "${ANYPOINT_ENV}"
+      
       - name: Get JAR File Path
         run: |
           JAR_FILE=$(ls target/*-mule-application.jar | head -n 1)
