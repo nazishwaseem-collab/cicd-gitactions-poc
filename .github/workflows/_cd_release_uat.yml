@@ -262,21 +262,26 @@ jobs:
           echo "JAR_BASENAME=${JAR_BASENAME}" >> $GITHUB_ENV
           echo "Found JAR file: ${JAR_FILE}"
 
-      - name: Login to Anypoint
-        run: anypoint-cli login --client_id "$CONNECTED_APP_CLIENT_ID" --client_secret "$CONNECTED_APP_CLIENT_SECRET" --organization "$ORG_ID" --environment "$ANYPOINT_ENV" --host "anypoint.mulesoft.com"
-      
-      - name: Deploy Bugfix SNAPSHOT to UAT
+      - name: Authenticate to Anypoint
+        run: |
+          export ANYPOINT_CLIENT_ID="${CONNECTED_APP_CLIENT_ID}"
+          export ANYPOINT_CLIENT_SECRET="${CONNECTED_APP_CLIENT_SECRET}"
+          export ANYPOINT_ORG="${ORG_ID}"
+          export ANYPOINT_ENV="${ANYPOINT_ENV}"
+          export ANYPOINT_HOST="anypoint.mulesoft.com"
+          echo " Anypoint CLI authentication environment set" 
+          
+      - name: Deploy to CloudHub 2.0
         run: |
           API_INSTANCE_ID=$(cat api_instance_id.txt)
           APP_NAME="bosuat-${GITHUB_REPOSITORY##*/}"
           echo "Deploying bugfix SNAPSHOT to UAT with API ID ${API_INSTANCE_ID}"
           echo "App Name: ${APP_NAME}"
-          echo "Version: ${{ env.CURRENT_VERSION }}"
-          echo "JAR: ${{ env.JAR_FILE }}"
-          echo "This is an iterative bugfix deployment - deploying local JAR directly to CloudHub"
-          echo "anypoint-cli runtime-mgr:cloudhub2:application:deploy --organization "$ORG_ID" --environment "$ANYPOINT_ENV" --target "Cloudhub-US-East-2" --name "$APP_NAME" --runtime "4.9.0" --replicas 1 --vCores 0.1 --file "$JAR_FILE" --property "anypoint.platform.client_id=$ANYPOINT_PLATFORM_CLIENT_ID" --property "anypoint.platform.client_secret=$ANYPOINT_PLATFORM_CLIENT_SECRET" --property "api.id=$API_INSTANCE_ID" --property "env=$TARGET_ENV" --property "mule.key=$DECRYPTION_KEY"      "
-          anypoint-cli runtime-mgr:cloudhub2:application:deploy --organization "$ORG_ID" --environment "$ANYPOINT_ENV" --target "Cloudhub-US-East-2" --name "$APP_NAME" --runtime "4.9.0" --replicas 1 --vCores 0.1 --file "$JAR_FILE" --property "anypoint.platform.client_id=$ANYPOINT_PLATFORM_CLIENT_ID" --property "anypoint.platform.client_secret=$ANYPOINT_PLATFORM_CLIENT_SECRET" --property "api.id=$API_INSTANCE_ID" --property "env=$TARGET_ENV" --property "mule.key=$DECRYPTION_KEY"      
-      
+          echo "Version: ${CURRENT_VERSION}"
+          echo "JAR: ${JAR_FILE}"
+          echo "Deploying directly to CloudHub 2.0..."
+          echo "anypoint-cli runtime-mgr:application:deploy --organization "${ORG_ID}" --environment "${ANYPOINT_ENV}" --target "Cloudhub-US-East-2" --name "${APP_NAME}" --runtime "4.9.0" --replicas 1 --vCores 0.1 --file "${JAR_FILE}" --property "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" --property "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" --property "api.id=${API_INSTANCE_ID}" --property "env=${TARGET_ENV}" --property "mule.key=${DECRYPTION_KEY}" --property "bos.host=${BOS_HOST}" --property "bos.port=${BOS_PORT}""
+          anypoint-cli runtime-mgr:application:deploy --organization "${ORG_ID}" --environment "${ANYPOINT_ENV}" --target "Cloudhub-US-East-2" --name "${APP_NAME}" --runtime "4.9.0" --replicas 1 --vCores 0.1 --file "${JAR_FILE}" --property "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" --property "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" --property "api.id=${API_INSTANCE_ID}" --property "env=${TARGET_ENV}" --property "mule.key=${DECRYPTION_KEY}" --property "bos.host=${BOS_HOST}" --property "bos.port=${BOS_PORT}"      
       - name: Deployment Summary
         run: |
           echo "========================================="
