@@ -271,8 +271,8 @@ jobs:
           echo "JAR: ${{ env.JAR_BASENAME }}"
           echo "This is an iterative bugfix deployment - deploying local JAR directly to CloudHub"
 
-          anypoint-cli-v4 runtime-mgr:cloudhub-application:deploy "${APP_NAME}" "${{ env.JAR_FILE }}" --environment "${ANYPOINT_ENV}" --workers 1 --workerSize "0.1" --region "us-east-2" --runtime "4.4.0" --property anypoint.platform.client_id:${ANYPOINT_PLATFORM_CLIENT_ID} --property anypoint.platform.client_secret:${ANYPOINT_PLATFORM_CLIENT_SECRET} --property api.id:${API_INSTANCE_ID} --property env:${TARGET_ENV} --update
-          
+          anypoint-cli-v4 runtime-mgr:cloudhub-application:deploy "${APP_NAME}" "${{ env.JAR_FILE }}" --environment "${ANYPOINT_ENV}" --workers 1 --workerSize 0.1 --region "us-east-2" --runtime "4.4.0" --property anypoint.platform.client_id:${ANYPOINT_PLATFORM_CLIENT_ID} --property anypoint.platform.client_secret:${ANYPOINT_PLATFORM_CLIENT_SECRET} --property api.id:${API_INSTANCE_ID} --property env:${TARGET_ENV}
+
       - name: Deployment Summary
         run: |
           echo "========================================="
