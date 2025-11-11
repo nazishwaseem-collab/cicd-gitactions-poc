@@ -206,6 +206,7 @@ jobs:
         run: |
           npm install -g anypoint-cli-v4
           sudo apt-get update && sudo apt-get install -y jq
+          npm install -g @mulesoft/anypoint-cli
 
       - name: Configure Anypoint CLI
         run: |
@@ -261,6 +262,9 @@ jobs:
           echo "JAR_BASENAME=${JAR_BASENAME}" >> $GITHUB_ENV
           echo "Found JAR file: ${JAR_FILE}"
 
+      - name: Login to Anypoint
+        run: anypoint-cli login --clientId "$CONNECTED_APP_CLIENT_ID" --clientSecret "$CONNECTED_APP_CLIENT_SECRET" --orgId "$ORG_ID" --environment "$ANYPOINT_ENV"
+      
       - name: Deploy Bugfix SNAPSHOT to UAT
         run: |
           API_INSTANCE_ID=$(cat api_instance_id.txt)
@@ -271,7 +275,8 @@ jobs:
           echo "JAR: ${{ env.JAR_FILE }}"
           echo "This is an iterative bugfix deployment - deploying local JAR directly to CloudHub"
 
-          anypoint-cli-v4 runtime-mgr:cloudhub-application:deploy "${APP_NAME}" "${{ env.JAR_FILE }}" --environment "${ANYPOINT_ENV}" --region "us-east-2" --workers 1 --workerSize 0.1 --runtime "4.9.0" --property "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" --property "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" --property "api.id=${API_INSTANCE_ID}" --property "env=${TARGET_ENV}" --property "mule.key=${DECRYPTION_KEY}" --property "bos.host=${BOS_HOST}" --property "bos.port=${BOS_PORT}"
+          anypoint-cli runtime-mgr:cloudhub2:application:deploy --organization "$ORG_ID" --environment "$ANYPOINT_ENV" --target "Cloudhub-US-East-2" --name "$APP_NAME" --runtime "4.9.0" --replicas 1 --vCores 0.1 --file "$JAR_FILE" --property "anypoint.platform.client_id=$ANYPOINT_PLATFORM_CLIENT_ID" --property "anypoint.platform.client_secret=$ANYPOINT_PLATFORM_CLIENT_SECRET" --property "api.id=$API_INSTANCE_ID" --property "env=$TARGET_ENV" --property "mule.key=$DECRYPTION_KEY"      
+      
       - name: Deployment Summary
         run: |
           echo "========================================="
