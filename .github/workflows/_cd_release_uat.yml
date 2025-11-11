@@ -249,21 +249,12 @@ jobs:
           echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
           echo "$API_INSTANCE_ID" > api_instance_id.txt
 
-      - name: Authenticate to Anypoint Platform
+      - name: Configure Connected App Authentication
         run: |
-          anypoint-cli-v4 conf auth:connected-app set --clientId "${CONNECTED_APP_CLIENT_ID}" --clientSecret "${CONNECTED_APP_CLIENT_SECRET}" --organization "${ORG_ID}" --environment "${ANYPOINT_ENV}"
-      
-      - name: Get JAR File Path
-        run: |
-          JAR_FILE=$(ls target/*-mule-application.jar | head -n 1)
-          if [ -z "$JAR_FILE" ]; then
-            echo "ERROR: No JAR file found in target directory"
-            exit 1
-          fi
-          JAR_BASENAME=$(basename "$JAR_FILE")
-          echo "JAR_FILE=${JAR_FILE}" >> $GITHUB_ENV
-          echo "JAR_BASENAME=${JAR_BASENAME}" >> $GITHUB_ENV
-          echo "Found JAR file: ${JAR_FILE}"
+          echo "Configuring Anypoint Connected App authentication for UAT..."
+          anypoint-cli-v4 conf auth:connected-app set uat-app "${CONNECTED_APP_CLIENT_ID}" "${CONNECTED_APP_CLIENT_SECRET}" --org "${ORG_ID}" --env "${ANYPOINT_ENV}"
+          anypoint-cli-v4 conf auth:select uat-app
+          echo "Authentication configured successfully for ${ANYPOINT_ENV}"
 
       - name: Deploy Bugfix SNAPSHOT to UAT (Direct CloudHub Upload)
         run: |
