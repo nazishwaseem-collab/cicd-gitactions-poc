@@ -5,6 +5,10 @@ on:
     branches:
       - 'release/**'
       - 'bugfix/**'
+  pull_request:
+    types: [closed]
+    branches:
+      - 'release/**'
   workflow_dispatch:
     inputs:
       force_formal_release:
@@ -78,7 +82,7 @@ jobs:
 
       - name: Download Mule Secure Properties Tool
         run: |
-          echo "Downloading Mule Secure Properties Tool..."
+          echo "Downloading Mule Secure Properties Tool"
           mkdir -p /tmp/mule-tools
           cd /tmp/mule-tools
           curl -sL https://docs.mulesoft.com/mule-runtime/latest/_attachments/secure-properties-tool.jar -o secure-properties-tool.jar
@@ -218,13 +222,13 @@ jobs:
           API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
           API_SCHEME=$(mvn help:evaluate -Dexpression=api.manager.scheme -q -DforceStdout -P${TARGET_ENV})
           API_PORT=$(mvn help:evaluate -Dexpression=api.manager.port -q -DforceStdout -P${TARGET_ENV})
-          
-          echo "Managing API for formal release: $REPO_NAME version $BASE_VERSION"
+          echo "API Configuration: Endpoint=${ENDPOINT_URI}, Type=${DEPLOYMENT_TYPE}, Path=${API_PATH}, Scheme=${API_SCHEME}, Port=${API_PORT}"
+          echo "Managing API for bugfix testing: $REPO_NAME version $BASE_VERSION"
           
           API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id' || echo "")
           
           if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
-            echo "Creating new API instance for release candidate..."
+            echo "Creating new API instance for release candidate"
             CREATE_OUTPUT=$(anypoint-cli-v4 api-mgr:api:manage "$REPO_NAME" "$BASE_VERSION" --environment "${ANYPOINT_ENV}" --deploymentType "$DEPLOYMENT_TYPE" --endpointUri "$ENDPOINT_URI" --path "$API_PATH" --scheme "$API_SCHEME" --port "$API_PORT" --muleVersion4OrAbove --output json 2>&1)
             API_INSTANCE_ID=$(echo "$CREATE_OUTPUT" | jq -r '.id // .apiInstanceId // empty' 2>/dev/null || echo "")
             
@@ -241,6 +245,7 @@ jobs:
             exit 1
           fi
           
+          echo "Successfully obtained API Instance ID: ${API_INSTANCE_ID}"
           echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
           echo "$API_INSTANCE_ID" > api_instance_id.txt
 
@@ -264,23 +269,33 @@ jobs:
       - name: Upload Release Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mule-artifact-uat-release
+          name: mule-artifact-uat-release-${{ env.RELEASE_TAG }}
           path: target/*.jar
           if-no-files-found: error
           retention-days: 30
 
       - name: Release Summary
         run: |
-          echo "Formal Release Candidate deployment completed"
+          echo "Formal Release Candidate Deployment Completed"
           echo "Release Tag: ${{ env.RELEASE_TAG }}"
           echo "Environment: ${ANYPOINT_ENV}"
           echo "API Instance ID: $(cat api_instance_id.txt)"
+          echo "Bugfix Merge Detected: ${{ steps.detect_bugfix.outputs.is_bugfix }}"
+          echo ""
+          if [ "${{ steps.detect_bugfix.outputs.is_bugfix }}" = "true" ]; then
+            echo "BACKPORT REQUIRED"
+            echo "This was a bugfix merge - backport job will be triggered"
+            echo "A PR will be created automatically: release to develop"
+          else
+            echo "NO BACKPORT NEEDED"
+            echo "This was a regular release merge"
+          fi
 
   backport_to_develop:
-    name: Backport to Develop Branch
+    name: Backport Bug Fixes to Develop Branch
     runs-on: ubuntu-latest
     needs: formal_release_candidate_uat
-    if: success()
+    if: success() && needs.formal_release_candidate_uat.outputs.is_bugfix_merge == 'true'
 
     steps:
       - name: Checkout code
@@ -294,53 +309,113 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Get Release Branch and Version
+     - name: Get Release Branch and Version
         run: |
           RELEASE_BRANCH="${{ github.ref_name }}"
+          RELEASE_TAG="${{ needs.formal_release_candidate_uat.outputs.release_tag }}"
           echo "RELEASE_BRANCH=${RELEASE_BRANCH}" >> $GITHUB_ENV
-          echo "Source branch for backport: ${RELEASE_BRANCH}"
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
+          echo "Backport triggered for bug fix in branch: ${RELEASE_BRANCH}"
+          echo "Release tag: ${RELEASE_TAG}"
+
+      - name: Verify Bugfix Context
+        run: |
+          echo "This backport was triggered because a bugfix was detected"
+          echo "Detection method: Branch name pattern matching"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Source branch: ${{ github.event.pull_request.head.ref }}"
+          fi
 
       - name: Create Backport Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: Backport fixes from ${{ env.RELEASE_BRANCH }} to develop"
-          title: "Backport: ${{ env.RELEASE_BRANCH }} to develop"
+          commit-message: "chore: Backport bug fixes from ${{ env.RELEASE_BRANCH }} to develop"
+          title: "[Backport] Bug fixes from ${{ env.RELEASE_BRANCH }} to develop"
           body: |
-            This PR backports bug fixes from the release branch to develop.
+            ## Automated Backport - Bug Fixes
             
-            **Release Branch:** ${{ env.RELEASE_BRANCH }}
-            **Target Branch:** develop
+            This PR backports bug fixes from the release branch to develop to prevent regression in future releases.
             
-            **Action Required:**
-            - Release Manager must review this PR
-            - Choose backport strategy:
-              - **Cherry-Pick:** Select specific commits for targeted fixes
-              - **Merge:** Merge entire release branch if closely aligned
-            - Resolve any conflicts manually
-            - Approve and merge after validation
+            Details
+            - Release Branch: ${{ env.RELEASE_BRANCH }}
+            - Release Tag: ${{ env.RELEASE_TAG }}
+            - Target Branch: develop
+            - Trigger: Bugfix merge detected in release branch
             
-            **Why this matters:**
-            Backporting ensures bug fixes are included in future releases and prevents regression.
+            ### Action Required by Release Manager
             
-            Automated by: GitHub Actions CI/CD Pipeline
-          branch: backport/${{ env.RELEASE_BRANCH }}-to-develop
+            1. Review the Changes
+            - Verify that only bug fixes are included
+            - Check for any conflicts with ongoing development in develop
+            
+            2. Choose Backport Strategy
+            
+            Option A: Cherry-Pick (Recommended for targeted fixes)
+            git checkout develop
+            git cherry-pick commit-hash
+            - Use this when you want to backport specific commits only
+            - Provides more control over what gets merged
+            - Better for complex release branches with multiple unrelated changes
+            
+            Option B: Merge Release Branch
+            git checkout develop
+            git merge ${{ env.RELEASE_BRANCH }}
+            - Use this when branches are closely aligned
+            - Simpler when all changes in release should go to develop
+            - Appropriate when release only contains the bug fixes
+            
+            3. Resolve Conflicts (if any)
+            - Manually resolve any merge conflicts
+            - Test the resolution locally
+            - Ensure MUnit tests pass
+            
+            4. Approve and Merge
+            - After validation, approve this PR
+            - Merge to develop branch
+            
+            Why This Matters
+            
+            Backporting bug fixes to develop ensures:
+            - Future releases include the fix
+            - Developers working on develop have the latest corrections
+            - Same bugs do not reappear in next release cycle
+            - Code consistency across branches
+            
+            Automated by GitHub Actions CI/CD Pipeline
+            Workflow: Release & UAT Deployment
+          branch: backport/${{ env.RELEASE_BRANCH }}-to-develop-${{ github.run_number }}
           base: develop
           delete-branch: true
           labels: |
             backport
+            bugfix
             automated
             requires-review
+            release-manager
 
       - name: Backport Initiation Summary
         run: |
-          echo "Backport PR created successfully"
-          echo "Release Manager notification triggered"
-          echo "Manual review and approval required for merge to develop"forceStdout -P${TARGET_ENV})
+          echo "Backport PR Created Successfully"
+          echo "Release Branch: ${{ env.RELEASE_BRANCH }}"
+          echo "Release Tag: ${{ env.RELEASE_TAG }}"
+          echo "Target: develop branch"
+          echo ""
+          echo "NEXT STEPS:"
+          echo "1. Release Manager will receive notification"
+          echo "2. Manual review and approval required"
+          echo "3. Choose appropriate backport strategy (cherry-pick or merge)"
+          echo "4. Resolve any conflicts"
+          echo "5. Approve and merge to develop"
+          echo ""
+          echo "This ensures bug fixes are included in future releases"Stdout -P${TARGET_ENV})
+          API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
+          API_SCHEME=$(mvn help:evaluate -Dexpression=api.manager.scheme -q -DforceStdout -P${TARGET_ENV})
+          API_PORT=$(mvn help:evaluate -Dexpression=api.manager.port -q -DforceStdout -P${TARGET_ENV})
           echo "Managing API for bugfix testing: $REPO_NAME version $BASE_VERSION"
           API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id' || echo "")
           if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
-            echo "Creating new API instance for bugfix testing..."
+            echo "Creating new API instance for bugfix testing"
             CREATE_OUTPUT=$(anypoint-cli-v4 api-mgr:api:manage "$REPO_NAME" "$BASE_VERSION" --environment "${ANYPOINT_ENV}" --deploymentType "$DEPLOYMENT_TYPE" --endpointUri "$ENDPOINT_URI" --path "$API_PATH" --scheme "$API_SCHEME" --port "$API_PORT" --muleVersion4OrAbove --output json 2>&1)
             API_INSTANCE_ID=$(echo "$CREATE_OUTPUT" | jq -r '.id // .apiInstanceId // empty' 2>/dev/null || echo "")
             if [ -z "$API_INSTANCE_ID" ]; then
@@ -377,9 +452,13 @@ jobs:
     name: Formal Release Candidate to UAT
     runs-on: ubuntu-latest
     environment: UAT
+    outputs:
+      release_tag: ${{ steps.set_release_tag.outputs.tag }}
+      is_bugfix_merge: ${{ steps.detect_bugfix.outputs.is_bugfix }}
     if: |
-      github.event_name == 'workflow_dispatch' && inputs.force_formal_release == true ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/'))
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true && startsWith(github.event.pull_request.base.ref, 'release/')) ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.force_formal_release == true)
 
     steps:
       - name: Checkout code
@@ -388,6 +467,47 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Detect Bugfix Merge (Branch-Based)
+        id: detect_bugfix
+        run: |
+          echo "Determining if this is a bugfix merge using branch information"
+          IS_BUGFIX="false"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SOURCE_BRANCH="${{ github.event.pull_request.head.ref }}"
+            echo "PR detected - Source branch: ${SOURCE_BRANCH}"
+            if [[ "${SOURCE_BRANCH}" == bugfix/* ]] || [[ "${SOURCE_BRANCH}" == hotfix/* ]]; then
+              IS_BUGFIX="true"
+              echo "BUGFIX MERGE DETECTED: Source branch is ${SOURCE_BRANCH}"
+              echo "Backport will be triggered after successful deployment"
+            else
+              echo "REGULAR MERGE DETECTED: Source branch is ${SOURCE_BRANCH}"
+              echo "This appears to be a normal release from develop to release"
+              echo "No backport needed"
+            fi
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "Direct push detected to ${{ github.ref }}"
+            echo "Checking recent merge commits for bugfix branch patterns"
+            RECENT_MERGES=$(git log --merges --oneline -5 --pretty=format:"%s")
+            echo "Recent merge commits:"
+            echo "${RECENT_MERGES}"
+            if echo "${RECENT_MERGES}" | grep -iE 'merge.*(bugfix|hotfix)/'; then
+              IS_BUGFIX="true"
+              echo "BUGFIX MERGE DETECTED: Recent merge from bugfix branch found"
+              echo "Backport will be triggered after successful deployment"
+            else
+              echo "REGULAR PUSH: No recent bugfix merge detected"
+              echo "No backport needed"
+            fi
+          else
+            echo "Manual workflow trigger - checking commit history"
+            RECENT_MERGES=$(git log --merges --oneline -5 --pretty=format:"%s")
+            if echo "${RECENT_MERGES}" | grep -iE 'merge.*(bugfix|hotfix)/'; then
+              IS_BUGFIX="true"
+              echo "Bugfix merge found in recent history"
+            fi
+          fi
+          echo "is_bugfix=${IS_BUGFIX}" >> $GITHUB_OUTPUT
+          echo "Final decision: is_bugfix=${IS_BUGFIX}"
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
@@ -524,7 +644,7 @@ jobs:
 
       - name: Commit Encrypted Properties
         run: |
-          echo "Committing encrypted properties before release:prepare..."
+          echo "Committing encrypted properties before release:prepare"
           git add src/main/resources/properties/config-secure-*.yaml
           if git diff --cached --quiet; then
             echo "No changes to commit for encrypted properties"
@@ -535,13 +655,15 @@ jobs:
 
       - name: Execute Maven Release Prepare
         run: |
-          echo "Executing Maven Release Prepare - creating local tag and version bump..."
+          echo "Executing Maven Release Prepare - creating local tag and version bump"
           mvn -B release:prepare -s .maven/settings.xml -P${TARGET_ENV} -DpushChanges=false -Darguments="-DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id=${CONNECTED_APP_CLIENT_ID} -Dclient.secret=${CONNECTED_APP_CLIENT_SECRET} -Dnexus.username=${NEXUS_USERNAME} -Dnexus.password=${NEXUS_PASSWORD}" -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
 
       - name: Get Release Tag
+        id: set_release_tag
         run: |
           RELEASE_TAG=$(git describe --tags --abbrev=0)
           echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
+          echo "tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
           echo "Created release tag: ${RELEASE_TAG}"
 
       - name: Checkout Tagged Source
