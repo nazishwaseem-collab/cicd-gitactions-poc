@@ -206,7 +206,7 @@ jobs:
         run: |
           npm install -g anypoint-cli-v4
           sudo apt-get update && sudo apt-get install -y jq
-          npm install -g @mulesoft/anypoint-cli
+          npm install -g anypoint-cli
 
       - name: Configure Anypoint CLI
         run: |
