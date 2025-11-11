@@ -248,6 +248,18 @@ jobs:
           echo "Successfully obtained API Instance ID: ${API_INSTANCE_ID}"
           echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
           echo "$API_INSTANCE_ID" > api_instance_id.txt
+      
+      - name: Get JAR File Path
+        run: |
+          JAR_FILE=$(ls target/*-mule-application.jar | head -n 1)
+          if [ -z "$JAR_FILE" ]; then
+            echo "ERROR: No JAR file found in target directory"
+            exit 1
+          fi
+          JAR_BASENAME=$(basename "$JAR_FILE")
+          echo "JAR_FILE=${JAR_FILE}" >> $GITHUB_ENV
+          echo "JAR_BASENAME=${JAR_BASENAME}" >> $GITHUB_ENV
+          echo "Found JAR file: ${JAR_FILE}"
 
       - name: Deploy Bugfix SNAPSHOT to UAT (Direct CloudHub Upload)
         run: |
@@ -259,6 +271,7 @@ jobs:
           echo "JAR: ${{ env.JAR_BASENAME }}"
           echo "This is an iterative bugfix deployment - deploying local JAR directly to CloudHub"
           anypoint-cli-v4 runtime-mgr:cloudhub-application:deploy "${APP_NAME}" "${{ env.JAR_FILE }}" --environment "${ANYPOINT_ENV}" --workers 1 --workerSize 0.1 --region "us-east-2" --runtime "4.9.0" --property anypoint.platform.client_id:${ANYPOINT_PLATFORM_CLIENT_ID} --property anypoint.platform.client_secret:${ANYPOINT_PLATFORM_CLIENT_SECRET} --property api.id:${API_INSTANCE_ID} --property env:${TARGET_ENV} --property mule.key:${DECRYPTION_KEY}
+
       - name: Deployment Summary
         run: |
           echo "========================================="
