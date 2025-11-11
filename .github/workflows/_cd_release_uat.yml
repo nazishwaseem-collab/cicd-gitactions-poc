@@ -263,7 +263,7 @@ jobs:
           echo "Found JAR file: ${JAR_FILE}"
 
       - name: Login to Anypoint
-        run: anypoint-cli login --clientId "$CONNECTED_APP_CLIENT_ID" --clientSecret "$CONNECTED_APP_CLIENT_SECRET" --orgId "$ORG_ID" --environment "$ANYPOINT_ENV"
+        run: anypoint-cli login --client_id "$CONNECTED_APP_CLIENT_ID" --client_secret "$CONNECTED_APP_CLIENT_SECRET" --organization "$ORG_ID" --environment "$ANYPOINT_ENV" --host "anypoint.mulesoft.com"
       
       - name: Deploy Bugfix SNAPSHOT to UAT
         run: |
