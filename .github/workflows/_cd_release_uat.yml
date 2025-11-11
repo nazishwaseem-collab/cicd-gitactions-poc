@@ -251,7 +251,7 @@ jobs:
 
       - name: Authenticate to Anypoint Platform
         run: |
-          anypoint-cli-v4 login --username "${ANYPOINT_USERNAME}" --password "${ANYPOINT_PASSWORD}" --organization "${ORG_ID}" --environment "${ANYPOINT_ENV}"
+          anypoint-cli-v4 conf auth:connected-app set --clientId "${CONNECTED_APP_CLIENT_ID}" --clientSecret "${CONNECTED_APP_CLIENT_SECRET}" --organization "${ORG_ID}" --environment "${ANYPOINT_ENV}"
       
       - name: Get JAR File Path
         run: |
