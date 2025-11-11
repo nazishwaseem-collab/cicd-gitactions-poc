@@ -251,7 +251,7 @@ jobs:
 
       - name: Get JAR File Path
         run: |
-          JAR_FILE=$(ls target/*.jar | head -n 1)
+          JAR_FILE=$(ls target/*-mule-application.jar | head -n 1)
           if [ -z "$JAR_FILE" ]; then
             echo "ERROR: No JAR file found in target directory"
             exit 1
@@ -267,7 +267,7 @@ jobs:
           echo "Deploying bugfix SNAPSHOT to UAT with API ID ${API_INSTANCE_ID}"
           echo "Version: ${{ env.CURRENT_VERSION }}"
           echo "JAR: ${{ env.JAR_BASENAME }}"
-          echo "This is an iterative bugfix deployment - NO Exchange upload"
+          echo "This is an iterative bugfix deployment - deploying local JAR artifact"
           
           echo "env=${TARGET_ENV}" > cloudhub-properties.txt
           echo "api.id=${API_INSTANCE_ID}" >> cloudhub-properties.txt
@@ -291,6 +291,7 @@ jobs:
           echo "- No Exchange upload"
           echo "- Local JAR deployed directly"
 
+          
   backport_to_develop:
     name: Backport Bug Fixes to Develop Branch
     runs-on: ubuntu-latest
