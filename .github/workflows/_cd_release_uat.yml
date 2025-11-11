@@ -309,7 +309,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-     - name: Get Release Branch and Version
+      - name: Get Release Branch and Version
         run: |
           RELEASE_BRANCH="${{ github.ref_name }}"
           RELEASE_TAG="${{ needs.formal_release_candidate_uat.outputs.release_tag }}"
