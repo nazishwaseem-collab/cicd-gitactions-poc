@@ -261,7 +261,7 @@ jobs:
           echo "JAR_BASENAME=${JAR_BASENAME}" >> $GITHUB_ENV
           echo "Found JAR file: ${JAR_FILE}"
 
-      - name: Deploy Bugfix SNAPSHOT to UAT (Direct CloudHub Upload)
+      - name: Deploy Bugfix SNAPSHOT to UAT
         run: |
           API_INSTANCE_ID=$(cat api_instance_id.txt)
           APP_NAME="bosuat-${GITHUB_REPOSITORY##*/}"
@@ -270,8 +270,9 @@ jobs:
           echo "Version: ${{ env.CURRENT_VERSION }}"
           echo "JAR: ${{ env.JAR_BASENAME }}"
           echo "This is an iterative bugfix deployment - deploying local JAR directly to CloudHub"
-          anypoint-cli-v4 runtime-mgr:cloudhub-application:deploy "${APP_NAME}" "${{ env.JAR_FILE }}" --environment "${ANYPOINT_ENV}" --workers 1 --workerSize 0.1 --region "us-east-2" --runtime "4.9.0" --property anypoint.platform.client_id:${ANYPOINT_PLATFORM_CLIENT_ID} --property anypoint.platform.client_secret:${ANYPOINT_PLATFORM_CLIENT_SECRET} --property api.id:${API_INSTANCE_ID} --property env:${TARGET_ENV} --property mule.key:${DECRYPTION_KEY}
-
+          
+          anypoint-cli-v4 runtime-mgr:cloudhub-application:deploy "${APP_NAME}" "${{ env.JAR_FILE }}" --organization cdfa1988-3a90-4b73-98ba-5c388a10f44f --host anypoint.mulesoft.com --environment "${ANYPOINT_ENV}" --workers 1 --workerSize 0.1 --region us-east-2 --runtime 4.9.0 --property "anypoint.platform.client_id:${ANYPOINT_PLATFORM_CLIENT_ID}" --property "anypoint.platform.client_secret:${ANYPOINT_PLATFORM_CLIENT_SECRET}" --property "api.id:${API_INSTANCE_ID}" --property "env:${TARGET_ENV}" --property "mule.key:${DECRYPTION_KEY}"
+          
       - name: Deployment Summary
         run: |
           echo "========================================="
