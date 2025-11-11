@@ -274,7 +274,7 @@ jobs:
           echo "Version: ${{ env.CURRENT_VERSION }}"
           echo "JAR: ${{ env.JAR_FILE }}"
           echo "This is an iterative bugfix deployment - deploying local JAR directly to CloudHub"
-
+          echo "anypoint-cli runtime-mgr:cloudhub2:application:deploy --organization "$ORG_ID" --environment "$ANYPOINT_ENV" --target "Cloudhub-US-East-2" --name "$APP_NAME" --runtime "4.9.0" --replicas 1 --vCores 0.1 --file "$JAR_FILE" --property "anypoint.platform.client_id=$ANYPOINT_PLATFORM_CLIENT_ID" --property "anypoint.platform.client_secret=$ANYPOINT_PLATFORM_CLIENT_SECRET" --property "api.id=$API_INSTANCE_ID" --property "env=$TARGET_ENV" --property "mule.key=$DECRYPTION_KEY"      "
           anypoint-cli runtime-mgr:cloudhub2:application:deploy --organization "$ORG_ID" --environment "$ANYPOINT_ENV" --target "Cloudhub-US-East-2" --name "$APP_NAME" --runtime "4.9.0" --replicas 1 --vCores 0.1 --file "$JAR_FILE" --property "anypoint.platform.client_id=$ANYPOINT_PLATFORM_CLIENT_ID" --property "anypoint.platform.client_secret=$ANYPOINT_PLATFORM_CLIENT_SECRET" --property "api.id=$API_INSTANCE_ID" --property "env=$TARGET_ENV" --property "mule.key=$DECRYPTION_KEY"      
       
       - name: Deployment Summary
