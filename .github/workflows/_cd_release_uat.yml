@@ -755,7 +755,7 @@ jobs:
           echo "BUGFIX_API_ID=${API_INSTANCE_ID}" >> $GITHUB_ENV
           echo "$API_INSTANCE_ID" > api_instance_id.txt
 
-      - name: Execute Maven Release Perform (Bugfix with mule:deploy)
+      - name: Execute Maven Release Perform
         if: env.IS_BUGFIX == 'true'
         run: |
           echo "=== Executing release:perform for Bugfix ==="
@@ -773,7 +773,6 @@ jobs:
           
           echo "CloudHub properties file created:"
           cat cloudhub-deploy.properties
-          cp cloudhub-deploy.properties target/checkout/cloudhub-deploy.properties
           
           # Execute release:perform
           echo "mvn -B release:perform@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -DlocalCheckout=true -Dapi.id=${API_INSTANCE_ID} -Dmule.key=${DECRYPTION_KEY} -Denv=${TARGET_ENV} -Danypoint.platform.client.id=${ANYPOINT_PLATFORM_CLIENT_ID} -Danypoint.platform.client.secret=${ANYPOINT_PLATFORM_CLIENT_SECRET} -Danypoint.organization=${ORG_ID} -Danypoint.environment=${ANYPOINT_ENV} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}""
