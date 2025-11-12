@@ -286,7 +286,7 @@ jobs:
           echo "API Instance ID: $(cat api_instance_id.txt)"
           echo ""
           echo "NOTE: Iterative bugfix deployment"
-          echo "- No formal versioning or tagging"
+          echo "- No formal versioning or tagging "
           echo "- SNAPSHOT uploaded to Exchange"
           echo "- Deployed to CloudHub 2.0 from Exchange"
           
