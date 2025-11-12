@@ -143,7 +143,7 @@
 				     <id>bugfix-release</id>
 				     <configuration>
 				        <goals>deploy mule:deploy</goals>
-				        <arguments>-DskipMunitTests -DmuleDeploy -Denv=${env} -Dcloudhub2.applicationPropertiesFile=../cloudhub-deploy.properties -Danypoint.platform.client.id=${anypoint.platform.client.id} -Danypoint.platform.client.secret=${anypoint.platform.client.secret}</arguments>
+				        <arguments>-DskipMunitTests -DmuleDeploy -Denv=${env} -Dcloudhub2.applicationPropertiesFile=../cloudhub-deploy.properties -Dmule.key=${mule.key} -Danypoint.platform.client.id=${anypoint.platform.client.id} -Danypoint.platform.client.secret=${anypoint.platform.client.secret} -Dapi.id={api.id}</arguments>
 				     </configuration>
 				    </execution>
 			    </executions>
