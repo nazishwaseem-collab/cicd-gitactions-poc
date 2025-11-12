@@ -140,13 +140,12 @@
 			    <executions>
 			        <!-- Execution for bugfix releases - includes mule:deploy -->
 			         <execution>
-				    <id>bugfix-release</id>
-				    <configuration>
+				     <id>bugfix-release</id>
+				     <configuration>
 				        <goals>deploy mule:deploy</goals>
-				        <!-- Remove ALL property arguments - they'll be passed from pipeline -->
-				        <arguments>-DskipMunitTests -DmuleDeploy -Dcloudhub2.applicationPropertiesFile=../cloudhub-deploy.properties</arguments>
-				    </configuration>
-				</execution>
+				        <arguments>-DskipMunitTests -DmuleDeploy -Denv=${env} -Dcloudhub2.applicationPropertiesFile=../cloudhub-deploy.properties -Dmule.key=${decryption.key} -Danypoint.platform.client.id=${anypoint.platform.client.id} -Danypoint.platform.client.secret=${anypoint.platform.client.secret} -Dapi.id=${api.id}</arguments>
+				     </configuration>
+				    </execution>
 			    </executions>
 			</plugin>
 		</plugins>
