@@ -202,6 +202,27 @@ jobs:
           echo "Building bugfix application for UAT snapshot deployment"
           mvn -B clean package -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
 
+      - name: Upload SNAPSHOT to Exchange
+        run: |
+          echo "Uploading SNAPSHOT artifact to Exchange for CloudHub 2.0 deployment"
+          set +e
+          mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}" 2>&1 | tee /tmp/exchange-upload.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          if [ ${EXIT_CODE} -ne 0 ]; then
+            if grep -q "An asset already exists with this version" /tmp/exchange-upload.log; then
+              echo "WARNING: SNAPSHOT version already exists in Exchange"
+              echo "This is expected for iterative bugfix deployments"
+              echo "Proceeding with deployment using existing Exchange artifact"
+            else
+              echo "ERROR: Exchange upload failed"
+              cat /tmp/exchange-upload.log
+              exit ${EXIT_CODE}
+            fi
+          else
+            echo "Successfully uploaded SNAPSHOT to Exchange"
+          fi
+
       - name: Install Anypoint CLI
         run: |
           npm install -g anypoint-cli-v4
@@ -249,7 +270,7 @@ jobs:
           API_INSTANCE_ID=$(cat api_instance_id.txt)
           echo "Deploying bugfix SNAPSHOT to UAT with API ID ${API_INSTANCE_ID}"
           echo "Version: ${{ env.CURRENT_VERSION }}"
-          echo "This is an iterative bugfix deployment"
+          echo "This is an iterative bugfix deployment from Exchange"
           echo "env=${TARGET_ENV}" > cloudhub-properties.txt
           echo "api.id=${API_INSTANCE_ID}" >> cloudhub-properties.txt
           echo "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" >> cloudhub-properties.txt
@@ -265,9 +286,9 @@ jobs:
           echo "API Instance ID: $(cat api_instance_id.txt)"
           echo ""
           echo "NOTE: Iterative bugfix deployment"
-          echo "- No versioning or tagging"
-          echo "- No Exchange upload"
-          echo "- SNAPSHOT JAR deployed using Maven plugin"
+          echo "- No formal versioning or tagging"
+          echo "- SNAPSHOT uploaded to Exchange"
+          echo "- Deployed to CloudHub 2.0 from Exchange"
           
   backport_to_develop:
     name: Backport Bug Fixes to Develop Branch
