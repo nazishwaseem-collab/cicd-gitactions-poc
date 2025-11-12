@@ -119,23 +119,35 @@
 			</plugin>
 		<!-- Maven Release Plugin for formal UAT/PROD releases -->
 			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-release-plugin</artifactId>
-				<version>3.0.1</version>
-				<configuration>
-					<!-- Tag format: version number only (e.g., 1.0.0-rc1) -->
-					<tagNameFormat>@{project.version}</tagNameFormat>
-					<autoVersionSubmodules>true</autoVersionSubmodules>
-					<!-- Use UAT profile for release builds -->
-					<releaseProfiles>UAT</releaseProfiles>
-					<goals>deploy</goals>
-					<!-- Skip modification checks for pom.xml -->
-					<checkModificationExcludes>
-						<checkModificationExclude>pom.xml</checkModificationExclude>
-					</checkModificationExcludes>
-					<!-- Arguments passed to Maven during release:prepare and release:perform -->
-					<arguments>-DskipMunitTests</arguments>
-				</configuration>
+			    <groupId>org.apache.maven.plugins</groupId>
+			    <artifactId>maven-release-plugin</artifactId>
+			    <version>3.0.1</version>
+			    <configuration>
+			        <!-- Tag format: version number only (e.g., 1.0.0-rc1) -->
+			        <tagNameFormat>@{project.version}</tagNameFormat>
+			        <autoVersionSubmodules>true</autoVersionSubmodules>
+			        <!-- Use UAT profile for release builds -->
+			        <releaseProfiles>UAT</releaseProfiles>
+			        <!-- Default goals for regular releases (develop → release) -->
+			        <goals>deploy</goals>
+			        <!-- Skip modification checks for pom.xml -->
+			        <checkModificationExcludes>
+			            <checkModificationExclude>pom.xml</checkModificationExclude>
+			        </checkModificationExcludes>
+			        <!-- Arguments passed to Maven during release:prepare and release:perform -->
+			        <arguments>-DskipMunitTests</arguments>
+			    </configuration>
+			    <executions>
+			        <!-- Execution for bugfix releases - includes mule:deploy -->
+			        <execution>
+			            <id>bugfix-release</id>
+			            <configuration>
+			                <!-- Override goals to include mule:deploy for bugfix merges -->
+			                <goals>deploy mule:deploy</goals>
+			                <arguments>-DskipMunitTests -DmuleDeploy -Dapi.id=${api.id}</arguments>
+			            </configuration>
+			        </execution>
+			    </executions>
 			</plugin>
 		</plugins>
 	</build>
