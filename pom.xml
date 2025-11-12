@@ -143,13 +143,11 @@
 				    <id>bugfix-release</id>
 				    <configuration>
 				        <goals>deploy mule:deploy</goals>
-				        <!-- Use property placeholders that will be resolved at runtime -->
 				        <arguments>
 				            -DskipMunitTests 
-				            -DmuleDeploy 
-				            -Dapi.id=${api.id} 
-				            -Dmule.key=${mule.key}
+				            -DmuleDeploy
 				            -Denv=${env}
+				            -Dcloudhub2.applicationPropertiesFile=cloudhub-deploy.properties
 				            -Danypoint.platform.client.id=${anypoint.platform.client.id}
 				            -Danypoint.platform.client.secret=${anypoint.platform.client.secret}
 				        </arguments>
