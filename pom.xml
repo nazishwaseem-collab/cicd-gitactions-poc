@@ -140,13 +140,21 @@
 			    <executions>
 			        <!-- Execution for bugfix releases - includes mule:deploy -->
 			        <execution>
-			            <id>bugfix-release</id>
-			            <configuration>
-			                <!-- Override goals to include mule:deploy for bugfix merges -->
-			                <goals>deploy mule:deploy</goals>
-			                <arguments>-DskipMunitTests -DmuleDeploy -Dapi.id=${api.id}</arguments>
-			            </configuration>
-			        </execution>
+				    <id>bugfix-release</id>
+				    <configuration>
+				        <goals>deploy mule:deploy</goals>
+				        <!-- Use property placeholders that will be resolved at runtime -->
+				        <arguments>
+				            -DskipMunitTests 
+				            -DmuleDeploy 
+				            -Dapi.id=${api.id} 
+				            -Dmule.key=${mule.key}
+				            -Denv=${env}
+				            -Danypoint.platform.client.id=${anypoint.platform.client.id}
+				            -Danypoint.platform.client.secret=${anypoint.platform.client.secret}
+				        </arguments>
+				    </configuration>
+				</execution>
 			    </executions>
 			</plugin>
 		</plugins>
