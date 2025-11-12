@@ -843,6 +843,8 @@ jobs:
           echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
           echo "$API_INSTANCE_ID" > api_instance_id.txt
 
+      - name: Deploy to CloudHub 2.0 (Regular Release Only)
+        if: env.IS_BUGFIX != 'true'
         run: |
           echo "=== CloudHub 2.0 Deployment (Regular Release) ==="
           
@@ -858,3 +860,41 @@ jobs:
           echo "CloudHub deployment completed"
 
       - name: Push Release Changes to Remote
+        run: |
+          echo "Pushing release changes to remote..."
+          git checkout ${{ github.ref_name }}
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin --tags
+          echo "Tag ${{ env.RELEASE_TAG }} pushed"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mule-artifact-uat-${{ env.RELEASE_TAG }}
+          path: target/*.jar
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deployment Summary
+        run: |
+          echo "=========================================="
+          echo "UAT DEPLOYMENT COMPLETED"
+          echo "=========================================="
+          echo "Release: ${{ env.RELEASE_TAG }}"
+          echo "Environment: UAT"
+          echo ""
+          if [ "${{ env.IS_BUGFIX }}" = "true" ]; then
+            echo "BUGFIX FLOW:"
+            echo "  release:prepare"
+            echo "  API Manager orchestration (pre-deployment)"
+            echo "  release:perform@bugfix-release (checkout + build + Exchange + mule:deploy)"
+            echo "  API ID: ${BUGFIX_API_ID}"
+            echo "  Backport will be triggered"
+          else
+            echo "REGULAR RELEASE FLOW:"
+            echo "  release:prepare"
+            echo "  Manual checkout + build + Exchange"
+            echo "  API Manager orchestration"
+            echo "  Manual mule:deploy"
+            echo "  API ID: $(cat api_instance_id.txt)"
+          fi
