@@ -683,6 +683,12 @@ jobs:
             echo "Flow: Manual checkout build Exchange API Manager mule:deploy"
           fi
 
+      - name: Push Release Tag Before Perform (Bugfix Flow Only)
+        if: env.IS_BUGFIX == 'true'
+        run: |
+          echo "Pushing release tag to remote: ${{ env.RELEASE_TAG }}"
+          git push origin ${{ env.RELEASE_TAG }}
+          echo "Tag pushed successfully - release:perform can now checkout from remote"
       - name: Install Anypoint CLI (For Bugfix API Management)
         if: env.IS_BUGFIX == 'true'
         run: |
