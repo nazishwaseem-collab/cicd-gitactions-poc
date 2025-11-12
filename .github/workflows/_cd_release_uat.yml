@@ -771,11 +771,17 @@ jobs:
           mule.key=${DECRYPTION_KEY}
           EOF
           
+          # Wait for release:perform to create the checkout folder
+          mvn -B release:prepare@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -Darguments="-DskipTests"
+          
+          # Copy the deploy file into the new checkout directory BEFORE perform
+          cp cloudhub-deploy.properties target/checkout/ || mkdir -p target/checkout && cp cloudhub-deploy.properties target/checkout/
+          
           echo "CloudHub properties file created:"
           cat cloudhub-deploy.properties
           
           # Execute release:perform
-          echo "mvn -B release:perform@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -DlocalCheckout=true -Dapi.id=${API_INSTANCE_ID} -Dmule.key=${DECRYPTION_KEY} -Denv=${TARGET_ENV} -Danypoint.platform.client.id=${ANYPOINT_PLATFORM_CLIENT_ID} -Danypoint.platform.client.secret=${ANYPOINT_PLATFORM_CLIENT_SECRET} -Danypoint.organization=${ORG_ID} -Danypoint.environment=${ANYPOINT_ENV} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}""
+          echo "mvn -B release:perform@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -DlocalCheckout=true -Dapi.id=${API_INSTANCE_ID} -Dmule.key=${DECRYPTION_KEY} -Denv=${TARGET_ENV} -Danypoint.platform.client.id=${ANYPOINT_PLATFORM_CLIENT_ID} -Danypoint.platform.client.secret=${ANYPOINT_PLATFORM_CLIENT_SECRET} -Danypoint.organization=${ORG_ID} -Danypoint.environment=${ANYPOINT_ENV} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"          "
           mvn -B release:perform@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -DlocalCheckout=true -Dapi.id=${API_INSTANCE_ID} -Dmule.key=${DECRYPTION_KEY} -Denv=${TARGET_ENV} -Danypoint.platform.client.id=${ANYPOINT_PLATFORM_CLIENT_ID} -Danypoint.platform.client.secret=${ANYPOINT_PLATFORM_CLIENT_SECRET} -Danypoint.organization=${ORG_ID} -Danypoint.environment=${ANYPOINT_ENV} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"          
           echo "release:perform completed with full deployment"          
 
