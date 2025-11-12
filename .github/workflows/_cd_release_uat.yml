@@ -652,11 +652,29 @@ jobs:
             echo "Encrypted properties committed successfully"
           fi
 
+      - name: Clean Previous Release State
+        run: |
+          echo "Cleaning previous release state with release:clean"
+          mvn -B release:clean -s .maven/settings.xml || echo "No previous release to clean"
+            
+          # Also check and remove any existing tags
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          NEXT_TAG=$(echo "${CURRENT_VERSION}" | sed 's/-SNAPSHOT//')
+            
+          if git rev-parse "${NEXT_TAG}" >/dev/null 2>&1; then
+            echo "Removing existing local tag: ${NEXT_TAG}"
+            git tag -d "${NEXT_TAG}"
+          fi
+            
+          if git ls-remote --tags origin | grep -q "refs/tags/${NEXT_TAG}$"; then
+            echo "Removing existing remote tag: ${NEXT_TAG}"
+            git push origin ":refs/tags/${NEXT_TAG}"
+          fi
+
       - name: Execute Maven Release Prepare
         run: |
           echo "Executing Maven Release Prepare - creating local tag and version bump"
           mvn -B release:prepare -s .maven/settings.xml -P${TARGET_ENV} -DpushChanges=false -Darguments="-DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id=${CONNECTED_APP_CLIENT_ID} -Dclient.secret=${CONNECTED_APP_CLIENT_SECRET} -Dnexus.username=${NEXUS_USERNAME} -Dnexus.password=${NEXUS_PASSWORD}" -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
-
 
       - name: Get Release Tag
         id: set_release_tag
