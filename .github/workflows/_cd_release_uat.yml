@@ -760,23 +760,26 @@ jobs:
         run: |
           echo "=== Executing release:perform for Bugfix ==="
           echo "Using local checkout - no remote clone needed"
-          echo "This will:"
-          echo "  1. Use LOCAL tagged source (already prepared)"
-          echo "  2. Build artifact"
-          echo "  3. Deploy to Exchange"
-          echo "  4. Deploy to CloudHub 2.0 with API ID"
-    
           API_INSTANCE_ID="${BUGFIX_API_ID}"
           echo "Using API Instance ID: ${API_INSTANCE_ID}"
-    
-          echo "env=${TARGET_ENV}" > cloudhub-deploy.properties
-          echo "api.id=${API_INSTANCE_ID}" >> cloudhub-deploy.properties
-          echo "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" >> cloudhub-deploy.properties
-          echo "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" >> cloudhub-deploy.properties
-    
-          echo "mvn -B release:perform@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -DlocalCheckout=true -Darguments="-DskipMunitTests -DmuleDeploy -Danypoint.organization=${ORG_ID} -Danypoint.environment=${ANYPOINT_ENV} -Dclient.id=${CONNECTED_APP_CLIENT_ID} -Dclient.secret=${CONNECTED_APP_CLIENT_SECRET} -Danypoint.platform.client.id=${ANYPOINT_PLATFORM_CLIENT_ID} -Danypoint.platform.client.secret=${ANYPOINT_PLATFORM_CLIENT_SECRET} -Dmule.key=${DECRYPTION_KEY} -Dapi.id=${API_INSTANCE_ID} -Dcloudhub2.applicationPropertiesFile=cloudhub-deploy.properties -Dnexus.username=${NEXUS_USERNAME} -Dnexus.password=${NEXUS_PASSWORD}" -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"  -Dcloudhub2.applicationPropertiesFile=cloudhub-properties.txt"
-          mvn -B release:perform@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -DlocalCheckout=true -Darguments="-DskipMunitTests -DmuleDeploy -Danypoint.organization=${ORG_ID} -Danypoint.environment=${ANYPOINT_ENV} -Dclient.id=${CONNECTED_APP_CLIENT_ID} -Dclient.secret=${CONNECTED_APP_CLIENT_SECRET} -Danypoint.platform.client.id=${ANYPOINT_PLATFORM_CLIENT_ID} -Danypoint.platform.client.secret=${ANYPOINT_PLATFORM_CLIENT_SECRET} -Dmule.key=${DECRYPTION_KEY} -Dapi.id=${API_INSTANCE_ID} -Dcloudhub2.applicationPropertiesFile=cloudhub-deploy.properties -Dnexus.username=${NEXUS_USERNAME} -Dnexus.password=${NEXUS_PASSWORD}" -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"  -Dcloudhub2.applicationPropertiesFile=cloudhub-properties.txt
-    
+          
+          # Create properties file in a location accessible during release:perform
+          PROPS_FILE="${GITHUB_WORKSPACE}/cloudhub-deploy.properties"
+          cat > "${PROPS_FILE}" << EOF
+          env=${TARGET_ENV}
+          api.id=${API_INSTANCE_ID}
+          anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}
+          anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}
+          mule.key=${DECRYPTION_KEY}
+          EOF
+          
+          echo "CloudHub properties file created at: ${PROPS_FILE}"
+          cat "${PROPS_FILE}"
+          
+          # Execute release:perform
+          echo "mvn -B release:perform@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -DlocalCheckout=true -Darguments="-DskipMunitTests -DmuleDeploy -Danypoint.organization=${ORG_ID} -Danypoint.environment=${ANYPOINT_ENV} -Dclient.id=${CONNECTED_APP_CLIENT_ID} -Dclient.secret=${CONNECTED_APP_CLIENT_SECRET} -Danypoint.platform.client.id=${ANYPOINT_PLATFORM_CLIENT_ID} -Danypoint.platform.client.secret=${ANYPOINT_PLATFORM_CLIENT_SECRET} -Dmule.key=${DECRYPTION_KEY} -Dapi.id=${API_INSTANCE_ID} -Dcloudhub2.applicationPropertiesFile=${PROPS_FILE} -Dnexus.username=${NEXUS_USERNAME} -Dnexus.password=${NEXUS_PASSWORD}" -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}""
+          mvn -B release:perform@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -DlocalCheckout=true -Darguments="-DskipMunitTests -DmuleDeploy -Danypoint.organization=${ORG_ID} -Danypoint.environment=${ANYPOINT_ENV} -Dclient.id=${CONNECTED_APP_CLIENT_ID} -Dclient.secret=${CONNECTED_APP_CLIENT_SECRET} -Danypoint.platform.client.id=${ANYPOINT_PLATFORM_CLIENT_ID} -Danypoint.platform.client.secret=${ANYPOINT_PLATFORM_CLIENT_SECRET} -Dmule.key=${DECRYPTION_KEY} -Dapi.id=${API_INSTANCE_ID} -Dcloudhub2.applicationPropertiesFile=${PROPS_FILE} -Dnexus.username=${NEXUS_USERNAME} -Dnexus.password=${NEXUS_PASSWORD}" -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+          
           echo "release:perform completed with full deployment"
 
       - name: Checkout Tagged Source (Regular Release Only)
