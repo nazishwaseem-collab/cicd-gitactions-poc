@@ -118,25 +118,37 @@
 				</configuration>
 			</plugin>
 		<!-- Maven Release Plugin for formal UAT/PROD releases -->
-			<plugin>
+		<plugin>
 		  <groupId>org.apache.maven.plugins</groupId>
 		  <artifactId>maven-release-plugin</artifactId>
 		  <version>3.0.1</version>
+		  <configuration>
+		    <!-- Tag format: version number only (e.g., 1.0.0-rc1) -->
+		    <tagNameFormat>@{project.version}</tagNameFormat>
+		    <autoVersionSubmodules>true</autoVersionSubmodules>
+		    <!-- Use UAT profile for release builds -->
+		    <releaseProfiles>UAT</releaseProfiles>
+		    <!-- Default goals for regular releases (develop → release) -->
+		    <goals>deploy</goals>
+		    <checkModificationExcludes>
+		      <checkModificationExclude>pom.xml</checkModificationExclude>
+		    </checkModificationExcludes>
+		    <!-- Default arguments for normal releases -->
+		    <arguments>-DskipMunitTests</arguments>
+		  </configuration>
+		
 		  <executions>
-		    <!-- For Bugfix Release -->
+		    <!-- Execution for BUGFIX releases: uses mule:deploy and runtime props -->
 		    <execution>
 		      <id>bugfix-release</id>
 		      <phase>deploy</phase>
 		      <goals>
-		        <goal>prepare</goal>
 		        <goal>perform</goal>
 		      </goals>
 		      <configuration>
-		        <releaseProfiles>${env}</releaseProfiles>
-		        <useReleaseProfile>false</useReleaseProfile>
-		        <autoVersionSubmodules>true</autoVersionSubmodules>
-		        <localCheckout>true</localCheckout>
-		        <arguments>-DskipTests -Denv=${env} -Danypoint.organization=${anypoint.organization} -Danypoint.environment=${anypoint.environment} -Dapi.id=${api.id} -Dmule.key=${mule.key} -Danypoint.platform.client.id=${anypoint.platform.client.id} -Danypoint.platform.client.secret=${anypoint.platform.client.secret} -Dclient.id=${client.id} -Dclient.secret=${client.secret} -Dnexus.username=${nexus.username} -Dnexus.password=${nexus.password}
+		        <releaseProfiles>UAT</releaseProfiles>
+		        <goals>deploy mule:deploy</goals>
+		        <arguments> -DskipMunitTests -DmuleDeploy -Denv=${env} -Dcloudhub2.applicationPropertiesFile=../cloudhub-deploy.properties -Danypoint.organization=${anypoint.organization} -Danypoint.environment=${anypoint.environment} -Danypoint.platform.client_id=${anypoint.platform.client_id} -Danypoint.platform.client_secret=${anypoint.platform.client_secret} -Dmule.key=${mule.key} -Ddecryption.key=${mule.key} -Dapi.id=${api.id}
 		        </arguments>
 		      </configuration>
 		    </execution>

@@ -721,7 +721,7 @@ jobs:
           echo "This must happen BEFORE release:perform to inject API ID"
           
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          RELEASE_VERSION=$(echo "${{ env.RELEASE_TAG }}" | sed 's/^v//')
+          RELEASE_VERSION=$(echo "${RELEASE_TAG}" | sed 's/^v//')
           BASE_VERSION=$(echo "${RELEASE_VERSION}" | sed 's/-rc[0-9]*$//')
           
           echo "API: ${REPO_NAME} v${BASE_VERSION}"
@@ -732,6 +732,8 @@ jobs:
           API_SCHEME=$(mvn help:evaluate -Dexpression=api.manager.scheme -q -DforceStdout -P${TARGET_ENV})
           API_PORT=$(mvn help:evaluate -Dexpression=api.manager.port -q -DforceStdout -P${TARGET_ENV})
           
+          echo "Resolved API Config: URI=${ENDPOINT_URI}, Type=${DEPLOYMENT_TYPE}, Path=${API_PATH}, Scheme=${API_SCHEME}, Port=${API_PORT}"
+
           API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id' || echo "")
           
           if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
