@@ -137,6 +137,17 @@
 		    </checkModificationExcludes>
 		    <!-- Default arguments for normal releases -->
 		    <arguments>-DskipMunitTests</arguments>
+		
+		    <!-- Enable local checkout (important for CI/CD release pipelines) -->
+		    <localCheckout>true</localCheckout>
+		
+		    <!-- SCM fallback info (required when -DlocalCheckout=true) -->
+		    <scm>
+		      <connection>scm:git:https://github.com/YOUR_ORG/YOUR_REPO.git</connection>
+		      <developerConnection>scm:git:https://github.com/YOUR_ORG/YOUR_REPO.git</developerConnection>
+		      <url>https://github.com/YOUR_ORG/YOUR_REPO.git</url>
+		      <tag>HEAD</tag>
+		    </scm>
 		  </configuration>
 		
 		  <executions>
