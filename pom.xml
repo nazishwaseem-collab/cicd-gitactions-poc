@@ -79,7 +79,6 @@
 							<anypoint.platform.client_secret>${anypoint.platform.client.secret}</anypoint.platform.client_secret>
 							<api.id>${api.id}</api.id>
 						</properties>
-						<applicationPropertiesFile>${cloudhub2.applicationPropertiesFile}</applicationPropertiesFile>
 					</cloudhub2Deployment>
 					<classifier>mule-application</classifier>
 				</configuration>
