@@ -112,11 +112,6 @@ jobs:
       - name: Encrypt All Secure Properties (Generic)
         run: |
           python3 << 'ENCRYPT_SCRIPT'
-      - name: Encrypt All Secure Properties (Generic)
-        run: |
-      - name: Encrypt All Secure Properties (Generic)
-        run: |
-          python3 << 'ENCRYPT_SCRIPT'
           import yaml
           import os
           import sys
@@ -131,7 +126,7 @@ jobs:
 
           def log_error(msg): 
               print(f"ERROR: {msg}", file=sys.stderr)
-        
+
           def log_warn(msg): 
               print(f"WARN: {msg}")
 
@@ -173,14 +168,14 @@ jobs:
                   if isinstance(v, str):
                       # Check if already encrypted
                       if v.startswith('![') and v.endswith(']'):
-                        log_info(f"Already encrypted: {full_path}")
-                        stats["already_encrypted"].append(full_path)
-                        continue
+                          log_info(f"Already encrypted: {full_path}")
+                          stats["already_encrypted"].append(full_path)
+                          continue
 
                       # Convert to environment variable name
                       env_key = normalize_key_to_env_var(full_path)
 
-                      log_info(f"Processing: {full_path} → {env_key}")
+                      log_info(f"Processing: {full_path} -> {env_key}")
 
                       # Look for matching GitHub Secret
                       if env_key in secrets and secrets[env_key]:
@@ -210,7 +205,7 @@ jobs:
                       for idx, item in enumerate(v):
                           if isinstance(item, dict):
                               process_dict(item, f"{full_path}[{idx}]", secrets, key, tool_path, stats)
-                
+
                   elif v is None or isinstance(v, (int, float, bool)):
                       log_info(f"Non-string value at {full_path}: {v} (type: {type(v).__name__})")
                       stats["non_string"].append(full_path)
@@ -283,48 +278,48 @@ jobs:
 
               # Print summary
               print("\n" + "=" * 70)
-              print(" ENCRYPTION SUMMARY")
+              print("ENCRYPTION SUMMARY")
               print("=" * 70)
               print(f"Environment: {env}")
               print(f"Secure file: {secure_file}")
-              print(f"\n Successfully Encrypted: {len(stats['encrypted'])}")
-              print(f"  Already Encrypted: {len(stats['already_encrypted'])}")
-              print(f"  Skipped (no secret): {len(stats['skipped'])}")
-              print(f" Failed: {len(stats['failed'])}")
-              print(f"  Non-string values: {len(stats['non_string'])}")
-            
-            if stats['encrypted']:
-                print(f"\n Encrypted Properties:")
+              print(f"\nSuccessfully Encrypted: {len(stats['encrypted'])}")
+              print(f"Already Encrypted: {len(stats['already_encrypted'])}")
+              print(f"Skipped (no secret): {len(stats['skipped'])}")
+              print(f"Failed: {len(stats['failed'])}")
+              print(f"Non-string values: {len(stats['non_string'])}")
+
+              if stats['encrypted']:
+                  print(f"\nEncrypted Properties:")
                   for prop in stats['encrypted']:
-                      print(f"   • {prop}")
-            
+                      print(f"   - {prop}")
+
               if stats['already_encrypted']:
-                  print(f"\n  Already Encrypted (skipped):")
+                  print(f"\nAlready Encrypted (skipped):")
                   for prop in stats['already_encrypted']:
-                      print(f"   • {prop}")
-            
+                      print(f"   - {prop}")
+
               if stats['skipped']:
-                  print(f"\n  Skipped Properties (missing GitHub Secrets):")
+                  print(f"\nSkipped Properties (missing GitHub Secrets):")
                   for prop, env_var in stats['skipped']:
-                      print(f"   • {prop}")
+                      print(f"   - {prop}")
                       print(f"     Expected Secret: {env_var}")
-                  print(f"\n   Action Required:")
-                  print(f"   Add missing secrets at: Repository → Settings → Secrets → Actions")
+                  print(f"\nAction Required:")
+                  print(f"   Add missing secrets at: Repository -> Settings -> Secrets -> Actions")
 
               if stats['failed']:
-                  print(f"\n Failed Encryptions:")
+                  print(f"\nFailed Encryptions:")
                   for prop in stats['failed']:
-                      print(f"   • {prop}")
+                      print(f"   - {prop}")
                   log_error("\nEncryption failed - BUILD FAILED")
                   sys.exit(1)
 
               print("=" * 70)
 
               if stats['skipped']:
-                  log_warn(f"\n  WARNING: {len(stats['skipped'])} properties not encrypted")
+                  log_warn(f"\nWARNING: {len(stats['skipped'])} properties not encrypted")
                   log_warn("Application may fail at runtime if these values are required")
               else:
-                  log_success("\n All properties encrypted successfully!")
+                  log_success("\nAll properties encrypted successfully!")
 
           if __name__ == "__main__":
               main()
