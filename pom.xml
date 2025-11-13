@@ -125,6 +125,8 @@
 		  <configuration>
 		    <!-- Tag format: version number only (e.g., 1.0.0-rc1) -->
 		    <tagNameFormat>@{project.version}</tagNameFormat>
+		
+		    <!-- Allow version bumping for all modules -->
 		    <autoVersionSubmodules>true</autoVersionSubmodules>
 		    <!-- Use UAT profile for release builds -->
 		    <releaseProfiles>UAT</releaseProfiles>
@@ -135,10 +137,21 @@
 		    </checkModificationExcludes>
 		    <!-- Default arguments for normal releases -->
 		    <arguments>-DskipMunitTests</arguments>
+		
+		    <!-- Enable local checkout (important for CI/CD release pipelines) -->
+		    <localCheckout>true</localCheckout>
+		
+		    <!-- SCM fallback info (required when -DlocalCheckout=true) -->
+		    <scm>
+		      <connection>scm:git:https://github.com/YOUR_ORG/YOUR_REPO.git</connection>
+		      <developerConnection>scm:git:https://github.com/YOUR_ORG/YOUR_REPO.git</developerConnection>
+		      <url>https://github.com/YOUR_ORG/YOUR_REPO.git</url>
+		      <tag>HEAD</tag>
+		    </scm>
 		  </configuration>
 		
 		  <executions>
-		    <!-- Execution for BUGFIX releases: uses mule:deploy and runtime props -->
+		    <!-- Execution for BUGFIX releases: deploy via mule:deploy -->
 		    <execution>
 		      <id>bugfix-release</id>
 		      <phase>deploy</phase>
@@ -148,7 +161,10 @@
 		      <configuration>
 		        <releaseProfiles>UAT</releaseProfiles>
 		        <goals>deploy mule:deploy</goals>
-		        <arguments> -DskipMunitTests -DmuleDeploy -Denv=${env} -Dcloudhub2.applicationPropertiesFile=../cloudhub-deploy.properties -Danypoint.organization=${anypoint.organization} -Danypoint.environment=${anypoint.environment} -Danypoint.platform.client_id=${anypoint.platform.client_id} -Danypoint.platform.client_secret=${anypoint.platform.client_secret} -Dmule.key=${mule.key} -Ddecryption.key=${mule.key} -Dapi.id=${api.id}
+		
+		        <!-- Full set of runtime arguments -->
+		        <arguments>
+		          -DskipMunitTests -DmuleDeploy -Denv=${env} -Dcloudhub2.applicationPropertiesFile=../cloudhub-deploy.properties -Danypoint.organization=${anypoint.organization} -Danypoint.environment=${anypoint.environment} -Danypoint.platform.client.id=${anypoint.platform.client.id} -Danypoint.platform.client.secret=${anypoint.platform.client.secret} -Dclient.id=${client.id} -Dclient.secret=${client.secret} -Dmule.key=${mule.key} -Ddecryption.key=${mule.key} -Dapi.id=${api.id}
 		        </arguments>
 		      </configuration>
 		    </execution>
