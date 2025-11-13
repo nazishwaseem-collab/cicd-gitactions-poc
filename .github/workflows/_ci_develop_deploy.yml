@@ -109,6 +109,7 @@ jobs:
           ls -lh secure-properties-tool.jar
           file secure-properties-tool.jar
 
+      - name: Encrypt All Secure Properties (Generic)
         run: |
           python3 << 'ENCRYPT_SCRIPT'
       - name: Encrypt All Secure Properties (Generic)
@@ -123,6 +124,7 @@ jobs:
           from pathlib import Path
 
           def log_info(msg): 
+              print(f"INFO: {msg}")
 
           def log_success(msg): 
               print(f"SUCCESS: {msg}")
