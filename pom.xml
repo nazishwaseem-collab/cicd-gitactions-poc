@@ -143,9 +143,9 @@
 		
 		    <!-- SCM fallback info (required when -DlocalCheckout=true) -->
 		    <scm>
-		      <connection>scm:git:https://github.com/YOUR_ORG/YOUR_REPO.git</connection>
-		      <developerConnection>scm:git:https://github.com/YOUR_ORG/YOUR_REPO.git</developerConnection>
-		      <url>https://github.com/YOUR_ORG/YOUR_REPO.git</url>
+		      <connection>scm:git:https://github.com/nazishwaseem-collab/cicd-gitactions-poc.git</connection>
+		      <developerConnection>scm:git:https://github.com/nazishwaseem-collab/cicd-gitactions-poc.git</developerConnection>
+		      <url>https://github.com/nazishwaseem-collab/cicd-gitactions-poc.git</url>
 		      <tag>HEAD</tag>
 		    </scm>
 		  </configuration>
