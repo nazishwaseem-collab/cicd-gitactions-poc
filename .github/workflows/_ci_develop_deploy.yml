@@ -109,7 +109,7 @@ jobs:
           ls -lh secure-properties-tool.jar
           file secure-properties-tool.jar
 
-      - name: Encrypt All Secure Properties (Generic)
+      - name: Encrypt All Secure Properties
         run: |
           python3 << 'ENCRYPT_SCRIPT'
           import yaml
