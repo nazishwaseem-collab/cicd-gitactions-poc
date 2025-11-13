@@ -52,8 +52,6 @@ jobs:
           echo "DECRYPTION_KEY=${{ secrets.DECRYPTION_KEY }}" >> $GITHUB_ENV
           echo "NEXUS_USERNAME=${{ secrets.NEXUS_USERNAME }}" >> $GITHUB_ENV
           echo "NEXUS_PASSWORD=${{ secrets.NEXUS_PASSWORD }}" >> $GITHUB_ENV
-          echo "BOS_HOST=${{ secrets.BOS_HOST }}" >> $GITHUB_ENV
-          echo "BOS_PORT=${{ secrets.BOS_PORT }}" >> $GITHUB_ENV
 
       # Set unique SNAPSHOT version for development
       - name: Set CI version (SNAPSHOT with build number)
@@ -111,6 +109,10 @@ jobs:
           ls -lh secure-properties-tool.jar
           file secure-properties-tool.jar
 
+        run: |
+          python3 << 'ENCRYPT_SCRIPT'
+      - name: Encrypt All Secure Properties (Generic)
+        run: |
       - name: Encrypt All Secure Properties (Generic)
         run: |
           python3 << 'ENCRYPT_SCRIPT'
@@ -120,12 +122,19 @@ jobs:
           import subprocess
           from pathlib import Path
 
-          def log_info(msg): print(f"INFO: {msg}")
-          def log_success(msg): print(f"SUCCESS: {msg}")
-          def log_error(msg): print(f"ERROR: {msg}", file=sys.stderr)
-          def log_warn(msg): print(f"WARN: {msg}")
+          def log_info(msg): 
+
+          def log_success(msg): 
+              print(f"SUCCESS: {msg}")
+
+          def log_error(msg): 
+              print(f"ERROR: {msg}", file=sys.stderr)
+        
+          def log_warn(msg): 
+              print(f"WARN: {msg}")
 
           def encrypt_with_jar(plaintext, key, tool_path):
+              """Encrypt plaintext using Mule Secure Properties Tool"""
               try:
                   cmd = [
                       'java', '-cp', tool_path,
@@ -135,48 +144,90 @@ jobs:
                   ]
                   result = subprocess.run(cmd, capture_output=True, text=True)
                   if result.returncode != 0:
-                      log_error(result.stderr)
+                      log_error(f"Encryption command failed: {result.stderr}")
                       return None
                   return result.stdout.strip()
               except Exception as e:
                   log_error(f"Encryption failed: {str(e)}")
                   return None
 
+          def normalize_key_to_env_var(property_path):
+              """
+              Convert YAML property path to GitHub Secret name
+              Examples:
+                bos.host -> BOS_HOST
+                database.primary.password -> DATABASE_PRIMARY_PASSWORD
+              """
+              return property_path.upper().replace('.', '_')
+
           def process_dict(node, path, secrets, key, tool_path, stats):
+              """
+              Recursively process YAML dictionary
+              Since this is config-secure-{ENV}.yaml, ALL string properties are sensitive
+              """
               for k, v in node.items():
                   full_path = f"{path}.{k}" if path else k
 
                   if isinstance(v, str):
-                      patterns = ['host','port','password','username','user','secret','key','token','credential','pwd']
-                      if any(p in k.lower() for p in patterns):
+                      # Check if already encrypted
+                      if v.startswith('![') and v.endswith(']'):
+                          log_info(f"Already encrypted: {full_path}")
+                          stats["already_encrypted"].append(full_path)
+                          continue
 
-                          env_key = full_path.upper().replace('.', '_')
-                          log_info(f"Found property: {full_path} → looking for env var {env_key}")
+                      # Convert to environment variable name
+                      env_key = normalize_key_to_env_var(full_path)
 
-                          if env_key in secrets:
-                              encrypted = encrypt_with_jar(secrets[env_key], key, tool_path)
-                              if encrypted:
-                                  node[k] = f"![{encrypted}]"
-                                  stats["encrypted"] += 1
-                                  log_success(f"Encrypted: {full_path}")
-                              else:
-                                  stats["failed"].append(full_path)
-                                  log_error(f"Failed to encrypt: {full_path}")
+                      log_info(f"Processing: {full_path} → {env_key}")
+
+                      # Look for matching GitHub Secret
+                      if env_key in secrets and secrets[env_key]:
+                          plaintext_value = secrets[env_key]
+
+                          # Encrypt the value
+                          encrypted = encrypt_with_jar(plaintext_value, key, tool_path)
+
+                          if encrypted:
+                              node[k] = f"![{encrypted}]"
+                              stats["encrypted"].append(full_path)
+                              log_success(f"Encrypted: {full_path}")
                           else:
-                              stats["skipped"].append(full_path)
-                              log_warn(f"❗ Missing env var {env_key} → value left unencrypted")
+                              stats["failed"].append(full_path)
+                              log_error(f"Failed to encrypt: {full_path}")
+                      else:
+                          stats["skipped"].append((full_path, env_key))
+                          log_warn(f"No GitHub Secret found for {env_key}")
+                          log_warn(f"Property {full_path} will remain as: {v}")
 
                   elif isinstance(v, dict):
+                      # Recursively process nested dictionaries
                       process_dict(v, full_path, secrets, key, tool_path, stats)
+
+                  elif isinstance(v, list):
+                      # Handle lists
+                      for idx, item in enumerate(v):
+                          if isinstance(item, dict):
+                              process_dict(item, f"{full_path}[{idx}]", secrets, key, tool_path, stats)
+                
+                  elif v is None or isinstance(v, (int, float, bool)):
+                      log_info(f"Non-string value at {full_path}: {v} (type: {type(v).__name__})")
+                      stats["non_string"].append(full_path)
 
           def main():
               env = os.getenv('TARGET_ENV', 'DEV').upper()
               secure_file = f"src/main/resources/properties/config-secure-{env}.yaml"
 
+              print("=" * 70)
+              log_info(f"Starting encryption for {env} environment")
+              log_info(f"Target file: {secure_file}")
+              print("=" * 70)
+
+              # Validate file exists
               if not Path(secure_file).exists():
-                  log_error(f"Secure config file missing: {secure_file}")
+                  log_error(f"Secure config file not found: {secure_file}")
                   sys.exit(1)
 
+              # Get encryption key and tool
               key = os.getenv('DECRYPTION_KEY')
               tool_path = os.getenv('SECURE_TOOL_PATH')
 
@@ -184,71 +235,102 @@ jobs:
                   log_error("Missing DECRYPTION_KEY or SECURE_TOOL_PATH")
                   sys.exit(1)
 
-              secrets = {k: v for k, v in os.environ.items() if k.isupper()}
-              log_info(f"Loaded {len(secrets)} env variables")
+              # Load ALL environment variables (GitHub Secrets are automatically available)
+              secrets = {k: v for k, v in os.environ.items() if k.isupper() and v}
+              log_info(f"Loaded {len(secrets)} environment variables from GitHub")
 
+              # Create backup
               backup = secure_file + ".backup"
               Path(secure_file).replace(backup)
               log_info(f"Backup created: {backup}")
 
-              data = yaml.safe_load(open(backup))
+              # Load YAML
+              try:
+                  with open(backup, 'r') as f:
+                      data = yaml.safe_load(f)
+                  if data is None:
+                      log_error(f"YAML file is empty: {secure_file}")
+                      sys.exit(1)
+              except Exception as e:
+                  log_error(f"Failed to load YAML: {str(e)}")
+                  sys.exit(1)
 
+              # Initialize statistics
               stats = {
-                  "encrypted": 0,
+                  "encrypted": [],
                   "skipped": [],
-                  "failed": []
+                  "failed": [],
+                  "already_encrypted": [],
+                  "non_string": []
               }
+
+              # Process all properties
+              log_info("\n Processing ALL properties in secure config file...")
+              log_info("NOTE: All properties in config-secure-{ENV}.yaml are treated as sensitive\n")
 
               process_dict(data, "", secrets, key, tool_path, stats)
 
-              yaml.dump(data, open(secure_file, "w"), sort_keys=False)
-              log_success(f"Encrypted {stats['encrypted']} properties")
+              # Write updated YAML
+              try:
+                  with open(secure_file, 'w') as f:
+                      yaml.dump(data, f, sort_keys=False, default_flow_style=False)
+                  log_success(f"Updated: {secure_file}")
+              except Exception as e:
+                  log_error(f"Failed to write YAML: {str(e)}")
+                  sys.exit(1)
 
-              print("\n========== DEBUG OUTPUT (REMOVE LATER) ==========")
-              print(f"Encrypted keys written to: {secure_file}")
-              for k, v in stats.items():
-                  print(f"{k}: {v}")
-              print("=================================================\n")
-
-              # DEBUG BLOCK (REMOVE LATER)
-              print("\n========== DEBUG: Encrypted values written to file ==========")
-              with open(secure_file, "r") as f:
-                  loaded_yaml = yaml.safe_load(f)
-
-              def walk(node, path=""):
-                  if isinstance(node, dict):
-                      for k, v in node.items():
-                          new_path = f"{path}.{k}" if path else k
-                          if isinstance(v, str) and v.startswith("!["):
-                              print(f"  {new_path} = {v}")
-                          else:
-                              walk(v, new_path)
-
-              walk(loaded_yaml)
-              print("========== END DEBUG OUTPUT ==========\n")
-              print("\n================ ENCRYPTION SUMMARY ================")
+              # Print summary
+              print("\n" + "=" * 70)
+              print(" ENCRYPTION SUMMARY")
+              print("=" * 70)
               print(f"Environment: {env}")
               print(f"Secure file: {secure_file}")
-              print(f"Encrypted: {stats['encrypted']}")
-              print(f"Skipped (missing env vars): {len(stats['skipped'])}")
-              for s in stats["skipped"]: print(f"  - {s}")
-              print(f"Failed encryptions: {len(stats['failed'])}")
-              for f in stats["failed"]: print(f"  - {f}")
-              print("====================================================")
+              print(f"\n Successfully Encrypted: {len(stats['encrypted'])}")
+              print(f"  Already Encrypted: {len(stats['already_encrypted'])}")
+              print(f"  Skipped (no secret): {len(stats['skipped'])}")
+              print(f" Failed: {len(stats['failed'])}")
+              print(f"  Non-string values: {len(stats['non_string'])}")
+            
+            if stats['encrypted']:
+                print(f"\n Encrypted Properties:")
+                  for prop in stats['encrypted']:
+                      print(f"   • {prop}")
+            
+              if stats['already_encrypted']:
+                  print(f"\n  Already Encrypted (skipped):")
+                  for prop in stats['already_encrypted']:
+                      print(f"   • {prop}")
+            
+              if stats['skipped']:
+                  print(f"\n  Skipped Properties (missing GitHub Secrets):")
+                  for prop, env_var in stats['skipped']:
+                      print(f"   • {prop}")
+                      print(f"     Expected Secret: {env_var}")
+                  print(f"\n   Action Required:")
+                  print(f"   Add missing secrets at: Repository → Settings → Secrets → Actions")
+
+              if stats['failed']:
+                  print(f"\n Failed Encryptions:")
+                  for prop in stats['failed']:
+                      print(f"   • {prop}")
+                  log_error("\nEncryption failed - BUILD FAILED")
+                  sys.exit(1)
+
+              print("=" * 70)
+
+              if stats['skipped']:
+                  log_warn(f"\n⚠️  WARNING: {len(stats['skipped'])} properties not encrypted")
+                  log_warn("Application may fail at runtime if these values are required")
+              else:
+                  log_success("\n🎉 All properties encrypted successfully!")
 
           if __name__ == "__main__":
               main()
           ENCRYPT_SCRIPT
-
         env:
           TARGET_ENV: ${{ env.TARGET_ENV }}
           DECRYPTION_KEY: ${{ secrets.DECRYPTION_KEY }}
           SECURE_TOOL_PATH: ${{ env.SECURE_TOOL_PATH }}
-          BOS_HOST: ${{ secrets.BOS_HOST }}
-          BOS_PORT: ${{ secrets.BOS_PORT }}
-          # All environment variables are automatically available
-          # The script will detect and use any SECRET_NAME variables
-
 
       # Run MUnit Tests (80% coverage requirement)
       - name: Run MUnit Tests
