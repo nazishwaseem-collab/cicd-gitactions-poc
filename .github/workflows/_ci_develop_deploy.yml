@@ -173,9 +173,9 @@ jobs:
                   if isinstance(v, str):
                       # Check if already encrypted
                       if v.startswith('![') and v.endswith(']'):
-                          log_info(f"Already encrypted: {full_path}")
-                          stats["already_encrypted"].append(full_path)
-                          continue
+                        log_info(f"Already encrypted: {full_path}")
+                        stats["already_encrypted"].append(full_path)
+                        continue
 
                       # Convert to environment variable name
                       env_key = normalize_key_to_env_var(full_path)
@@ -321,10 +321,10 @@ jobs:
               print("=" * 70)
 
               if stats['skipped']:
-                  log_warn(f"\n⚠️  WARNING: {len(stats['skipped'])} properties not encrypted")
+                  log_warn(f"\n  WARNING: {len(stats['skipped'])} properties not encrypted")
                   log_warn("Application may fail at runtime if these values are required")
               else:
-                  log_success("\n🎉 All properties encrypted successfully!")
+                  log_success("\n All properties encrypted successfully!")
 
           if __name__ == "__main__":
               main()
