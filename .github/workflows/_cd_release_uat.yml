@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - 'bugfix/**'
-      - 'release/**'
   pull_request:
     types: [closed]
     branches:
