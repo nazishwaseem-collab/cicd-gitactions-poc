@@ -990,3 +990,17 @@ jobs:
           fi
           echo ""
           echo "Note: All operations performed on merged release branch code"
+
+            echo "  release:prepare"
+            echo "  API Manager orchestration (pre-deployment)"
+            echo "  release:perform@bugfix-release (checkout + build + Exchange + mule:deploy)"
+            echo "  API ID: ${BUGFIX_API_ID}"
+            echo "  Backport will be triggered"
+          else
+            echo "REGULAR RELEASE FLOW:"
+            echo "  release:prepare"
+            echo "  Manual checkout + build + Exchange"
+            echo "  API Manager orchestration"
+            echo "  Manual mule:deploy"
+            echo "  API ID: $(cat api_instance_id.txt)"
+          fi
