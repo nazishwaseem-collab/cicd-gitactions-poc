@@ -462,20 +462,64 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify Correct Branch
         run: |
-          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-          EXPECTED_BRANCH="${{ github.event.pull_request.base.ref }}"
-          echo "Current branch: ${CURRENT_BRANCH}"
-          echo "Expected branch: ${EXPECTED_BRANCH}"
-          echo "Latest commit on this branch:"
-          git log -1 --oneline
+          echo "============================================"
+          echo "CHECKOUT RELEASE BRANCH WITH MERGED CODE"
+          echo "============================================"
+          SOURCE_BRANCH="${{ github.event.pull_request.head.ref }}"
+          TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
+          MERGE_SHA="${{ github.event.pull_request.merge_commit_sha }}"
+          echo "PR Details:"
+          echo "  Source Branch: ${SOURCE_BRANCH}"
+          echo "  Target Branch (Release): ${TARGET_BRANCH}"
+          echo "  Merge Commit SHA: ${MERGE_SHA}"
           echo ""
-          echo "This is the merged result on the release branch"
+          echo "Fetching all remote branches"
+          git fetch --all --prune
+          echo ""
+          echo "Checking out release branch: ${TARGET_BRANCH}"
+          git checkout "${TARGET_BRANCH}"
+          echo ""
+          echo "Pulling latest from origin/${TARGET_BRANCH}"
+          git pull origin "${TARGET_BRANCH}"
+          echo ""
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+																	 
+          echo "Current branch: ${CURRENT_BRANCH}"
+          if [ "${CURRENT_BRANCH}" = "HEAD" ]; then
+            echo "ERROR: In detached HEAD state"
+            exit 1
+          fi
+          if [ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]; then
+            echo "ERROR: Not on expected branch"
+            echo "Expected: ${TARGET_BRANCH}"
+            echo "Current: ${CURRENT_BRANCH}"
+            exit 1
+          fi
+          echo "SUCCESS: On branch ${CURRENT_BRANCH}"
+          echo ""
+          echo "Latest commit on ${TARGET_BRANCH}:"
+          git log -1 --format="SHA: %H%nAuthor: %an%nDate: %ad%nMessage: %s"
+          echo ""
+          echo "Recent commit history:"
+          git log -3 --oneline --graph
+          echo ""
+          if git log -5 --format="%H" | grep -q "${MERGE_SHA}"; then
+            echo "SUCCESS: Merge commit found in recent history"
+          else
+            echo "WARNING: Merge SHA not in last 5 commits"
+          fi
+          echo ""
+          echo "Files changed in latest commit:"
+          git diff --name-only HEAD~1 HEAD | head -20 || echo "No changes"
+          echo ""
+          echo "============================================"
+          echo "VERIFICATION COMPLETE - On branch ${CURRENT_BRANCH}"
+          echo "============================================"
 
 
       - name: Detect Bugfix Merge
