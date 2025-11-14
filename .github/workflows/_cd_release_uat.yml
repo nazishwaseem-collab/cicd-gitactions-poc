@@ -289,6 +289,7 @@ jobs:
           echo "- No formal versioning or tagging "
           echo "- SNAPSHOT uploaded to Exchange"
           echo "- Deployed to CloudHub 2.0 from Exchange"
+
           
   backport_to_develop:
     name: Backport Bug Fixes to Develop Branch
@@ -456,57 +457,60 @@ jobs:
       is_bugfix_merge: ${{ steps.detect_bugfix.outputs.is_bugfix }}
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true && startsWith(github.event.pull_request.base.ref, 'release/')) ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')) ||
       (github.event_name == 'workflow_dispatch' && inputs.force_formal_release == true)
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Detect Bugfix Merge (Branch-Based)
+      - name: Checkout Merged Code on Release Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect Bugfix Merge
         id: detect_bugfix
         run: |
-          echo "Determining if this is a bugfix merge using branch information"
+          echo "Determining if this is a bugfix merge"
           IS_BUGFIX="false"
+          
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             SOURCE_BRANCH="${{ github.event.pull_request.head.ref }}"
-            echo "PR detected - Source branch: ${SOURCE_BRANCH}"
+            echo "Pull Request Merge Detected"
+            echo "Source branch: ${SOURCE_BRANCH}"
+            echo "Target branch: ${{ github.event.pull_request.base.ref }}"
+            
             if [[ "${SOURCE_BRANCH}" == bugfix/* ]] || [[ "${SOURCE_BRANCH}" == hotfix/* ]]; then
               IS_BUGFIX="true"
-              echo "BUGFIX MERGE DETECTED: Source branch is ${SOURCE_BRANCH}"
-              echo "Backport will be triggered after successful deployment"
+              echo "BUGFIX MERGE DETECTED"
+              echo "This is a bug fix from ${SOURCE_BRANCH}"
+              echo "Will use release plugin for deployment"
             else
-              echo "REGULAR MERGE DETECTED: Source branch is ${SOURCE_BRANCH}"
-              echo "This appears to be a normal release from develop to release"
-              echo "No backport needed"
+              echo "REGULAR RELEASE MERGE DETECTED"
+              echo "This is a normal release merge from ${SOURCE_BRANCH}"
+              echo "Will use manual deployment workflow"
             fi
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            echo "Direct push detected to ${{ github.ref }}"
-            echo "Checking recent merge commits for bugfix branch patterns"
-            RECENT_MERGES=$(git log --merges --oneline -5 --pretty=format:"%s")
-            echo "Recent merge commits:"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual workflow trigger"
+            echo "Checking recent merge history"
+            RECENT_MERGES=$(git log --merges --oneline -3 --pretty=format:"%s")
+            echo "Recent merges:"
             echo "${RECENT_MERGES}"
-            if echo "${RECENT_MERGES}" | grep -iE 'merge.*(bugfix|hotfix)/'; then
-              IS_BUGFIX="true"
-              echo "BUGFIX MERGE DETECTED: Recent merge from bugfix branch found"
-              echo "Backport will be triggered after successful deployment"
-            else
-              echo "REGULAR PUSH: No recent bugfix merge detected"
-              echo "No backport needed"
-            fi
-          else
-            echo "Manual workflow trigger - checking commit history"
-            RECENT_MERGES=$(git log --merges --oneline -5 --pretty=format:"%s")
+            
             if echo "${RECENT_MERGES}" | grep -iE 'merge.*(bugfix|hotfix)/'; then
               IS_BUGFIX="true"
               echo "Bugfix merge found in recent history"
             fi
           fi
+          
           echo "is_bugfix=${IS_BUGFIX}" >> $GITHUB_OUTPUT
-          echo "Final decision: is_bugfix=${IS_BUGFIX}"
+          echo "Final decision: IS_BUGFIX=${IS_BUGFIX}"
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
@@ -693,22 +697,22 @@ jobs:
             echo "=========================================="
             echo "BUGFIX MERGE DETECTED"
             echo "=========================================="
+            echo "Using Maven Release Plugin for deployment"
             echo "Flow: API Manager orchestration release:perform (with mule:deploy)"
           else
             echo "=========================================="
             echo "REGULAR RELEASE"
             echo "=========================================="
+            echo "Using manual deployment workflow"
             echo "Flow: Manual checkout build Exchange API Manager mule:deploy"
           fi
 
-      - name: Install Anypoint CLI (For Bugfix API Management)
-        if: env.IS_BUGFIX == 'true'
+      - name: Install Anypoint CLI
         run: |
           npm install -g anypoint-cli-v4
           sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Configure Anypoint CLI (For Bugfix)
-        if: env.IS_BUGFIX == 'true'
+      - name: Configure Anypoint CLI
         run: |
           anypoint-cli-v4 conf client_id "${CONNECTED_APP_CLIENT_ID}"
           anypoint-cli-v4 conf client_secret "${CONNECTED_APP_CLIENT_SECRET}"
@@ -717,7 +721,7 @@ jobs:
       - name: API Manager Orchestration (Bugfix - Before release:perform)
         if: env.IS_BUGFIX == 'true'
         run: |
-          echo "=== API Manager Orchestration (Bugfix Flow) ==="
+          echo "API Manager Orchestration for Bugfix Flow"
           echo "This must happen BEFORE release:perform to inject API ID"
           
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
@@ -758,7 +762,7 @@ jobs:
           echo "$API_INSTANCE_ID" > api_instance_id.txt
 
       
-      - name: Execute Maven Release Perform
+      - name: Execute Maven Release Perform (Bugfix Flow Only)
         if: env.IS_BUGFIX == 'true'
         run: |
           echo "=== Executing release:perform for Bugfix ==="
@@ -819,21 +823,8 @@ jobs:
               exit ${EXIT_CODE}
             fi
           else
-            echo " Deployed to Exchange"
+            echo "Successfully deployed to Exchange"
           fi
-
-      - name: Install Anypoint CLI (Regular Release)
-        if: env.IS_BUGFIX != 'true'
-        run: |
-          npm install -g anypoint-cli-v4
-          sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Configure Anypoint CLI (Regular Release)
-        if: env.IS_BUGFIX != 'true'
-        run: |
-          anypoint-cli-v4 conf client_id "${CONNECTED_APP_CLIENT_ID}"
-          anypoint-cli-v4 conf client_secret "${CONNECTED_APP_CLIENT_SECRET}"
-          anypoint-cli-v4 conf organization "${ORG_ID}"
 
       - name: API Manager Orchestration (Regular Release Only)
         if: env.IS_BUGFIX != 'true'
@@ -890,9 +881,11 @@ jobs:
 
       - name: Push Release Changes to Remote
         run: |
-          echo "Pushing release changes to remote..."
-          git checkout ${{ github.ref_name }}
-          git push origin HEAD:${{ github.ref_name }}
+          echo "Pushing release changes to remote"
+          CURRENT_BRANCH="${{ github.event.pull_request.base.ref }}"
+          echo "Current branch: ${CURRENT_BRANCH}"
+          git checkout ${CURRENT_BRANCH}
+          git push origin HEAD:${CURRENT_BRANCH}
           git push origin --tags
           echo "Tag ${{ env.RELEASE_TAG }} pushed"
 
