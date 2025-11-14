@@ -3,7 +3,6 @@ name: CD - Release & UAT Deployment
 on:
   push:
     branches:
-      - 'release/**'
       - 'bugfix/**'
   pull_request:
     types: [closed]
@@ -467,12 +466,17 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Checkout Merged Code on Release Branch
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.base.ref }}
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify Correct Branch
+        run: |
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          EXPECTED_BRANCH="${{ github.event.pull_request.base.ref }}"
+          echo "Current branch: ${CURRENT_BRANCH}"
+          echo "Expected branch: ${EXPECTED_BRANCH}"
+          echo "Latest commit on this branch:"
+          git log -1 --oneline
+          echo ""
+          echo "This is the merged result on the release branch"
+
 
       - name: Detect Bugfix Merge
         id: detect_bugfix
@@ -678,7 +682,11 @@ jobs:
       - name: Execute Maven Release Prepare
         run: |
           echo "Executing Maven Release Prepare - creating local tag and version bump"
+          echo "Working on branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "Branch commit: $(git log -1 --oneline)"
           mvn -B release:prepare -s .maven/settings.xml -P${TARGET_ENV} -DpushChanges=false -Darguments="-DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id=${CONNECTED_APP_CLIENT_ID} -Dclient.secret=${CONNECTED_APP_CLIENT_SECRET} -Dnexus.username=${NEXUS_USERNAME} -Dnexus.password=${NEXUS_PASSWORD}" -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+          echo ""
+          echo "Release prepare completed - tag created from release branch"       
 
       - name: Get Release Tag
         id: set_release_tag
@@ -796,19 +804,25 @@ jobs:
       - name: Checkout Tagged Source (Regular Release Only)
         if: env.IS_BUGFIX != 'true'
         run: |
-          echo "Manual checkout of tagged source: ${{ env.RELEASE_TAG }}"
+          echo "Checking out tagged source for regular release: ${{ env.RELEASE_TAG }}"
+          echo "This tag was created from the release branch: ${{ github.event.pull_request.base.ref }}"
           git checkout ${{ env.RELEASE_TAG }}
+          echo ""
+          echo "Tag details:"
+          git show ${{ env.RELEASE_TAG }} --no-patch --format="%H %s"
+          echo ""
+          echo "Confirmed: Building from release branch tag"
 
       - name: Build Tagged Artifact (Regular Release Only)
         if: env.IS_BUGFIX != 'true'
         run: |
-          echo "Manual build of artifact..."
+          echo "Manual build of artifact"
           mvn -B clean package -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
 
       - name: Deploy to Exchange (Regular Release Only)
         if: env.IS_BUGFIX != 'true'
         run: |
-          echo "Manual deploy to Exchange..."
+          echo "Manual deploy to Exchange"
           set +e
           mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}" 2>&1 | tee /tmp/exchange-deploy.log
           EXIT_CODE=${PIPESTATUS[0]}
@@ -907,6 +921,33 @@ jobs:
           echo ""
           if [ "${{ env.IS_BUGFIX }}" = "true" ]; then
             echo "BUGFIX FLOW:"
+            echo "Deployed from branch: ${{ github.event.pull_request.base.ref }}"
+          echo ""
+          if [ "${{ env.IS_BUGFIX }}" = "true" ]; then
+            echo "BUGFIX FLOW:"
+            echo "  Source: ${{ github.event.pull_request.head.ref }}"
+            echo "  Target: ${{ github.event.pull_request.base.ref }}"
+            echo "  Steps:"
+            echo "    - release:prepare on release branch"
+            echo "    - API Manager orchestration (pre-deployment)"
+            echo "    - release:perform@bugfix-release (checkout + build + Exchange + mule:deploy)"
+            echo "  API ID: ${BUGFIX_API_ID}"
+            echo "  Backport will be triggered"
+          else
+            echo "REGULAR RELEASE FLOW:"
+            echo "  Source: ${{ github.event.pull_request.head.ref }}"
+            echo "  Target: ${{ github.event.pull_request.base.ref }}"
+            echo "  Steps:"
+            echo "    - release:prepare on release branch"
+            echo "    - Manual checkout of tag from release branch"
+            echo "    - Manual build + Exchange"
+            echo "    - API Manager orchestration"
+            echo "    - Manual mule:deploy"
+            echo "  API ID: $(cat api_instance_id.txt)"
+          fi
+          echo ""
+          echo "Note: All operations performed on merged release branch code"
+
             echo "  release:prepare"
             echo "  API Manager orchestration (pre-deployment)"
             echo "  release:perform@bugfix-release (checkout + build + Exchange + mule:deploy)"
