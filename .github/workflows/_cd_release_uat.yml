@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'bugfix/**'
+      - 'release/**'
   pull_request:
     types: [closed]
     branches:
@@ -456,8 +457,8 @@ jobs:
       is_bugfix_merge: ${{ steps.detect_bugfix.outputs.is_bugfix }}
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true && startsWith(github.event.pull_request.base.ref, 'release/')) ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')) ||
       (github.event_name == 'workflow_dispatch' && inputs.force_formal_release == true)
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -470,9 +471,15 @@ jobs:
           echo "============================================"
           echo "CHECKOUT RELEASE BRANCH WITH MERGED CODE"
           echo "============================================"
-          SOURCE_BRANCH="${{ github.event.pull_request.head.ref }}"
-          TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
-          MERGE_SHA="${{ github.event.pull_request.merge_commit_sha }}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SOURCE_BRANCH="${{ github.event.pull_request.head.ref }}"
+            TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
+            MERGE_SHA="${{ github.event.pull_request.merge_commit_sha }}"
+          else
+            SOURCE_BRANCH="unknown"
+            TARGET_BRANCH="${{ github.ref_name }}"
+            MERGE_SHA="${{ github.sha }}"
+          fi
           echo "PR Details:"
           echo "  Source Branch: ${SOURCE_BRANCH}"
           echo "  Target Branch (Release): ${TARGET_BRANCH}"
@@ -481,11 +488,14 @@ jobs:
           echo "Fetching all remote branches"
           git fetch --all --prune
           echo ""
-          echo "Checking out release branch: ${TARGET_BRANCH}"
-          git checkout "${TARGET_BRANCH}"
-          echo ""
-          echo "Pulling latest from origin/${TARGET_BRANCH}"
-          git pull origin "${TARGET_BRANCH}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "Push event detected - already on correct branch ${TARGET_BRANCH}"
+            echo "Current HEAD: $(git rev-parse HEAD)"
+          else
+            echo "PR event - checking out release branch: ${TARGET_BRANCH}"
+            git checkout "${TARGET_BRANCH}"
+            git pull origin "${TARGET_BRANCH}"
+          fi
           echo ""
           CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
           echo "Current branch: ${CURRENT_BRANCH}"
