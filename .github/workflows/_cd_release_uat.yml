@@ -238,7 +238,7 @@ jobs:
       - name: Manage API Instance (UAT)
         run: |
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          BASE_VERSION=$(echo "${{ env.CURRENT_VERSION }}" | sed 's/-SNAPSHOT//' | sed 's/-rc[0-9]*$//')
+          BASE_VERSION=$(echo "${{ env.ORIGINAL_VERSION }}" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
           ENDPOINT_URI=$(mvn help:evaluate -Dexpression=api.manager.endpoint.uri -q -DforceStdout -P${TARGET_ENV})
           DEPLOYMENT_TYPE=$(mvn help:evaluate -Dexpression=api.manager.deployment.type -q -DforceStdout -P${TARGET_ENV})
           API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
