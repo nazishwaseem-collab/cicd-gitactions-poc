@@ -462,6 +462,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -487,14 +488,10 @@ jobs:
           echo "Fetching all remote branches"
           git fetch --all --prune
           echo ""
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "Push event detected - already on correct branch ${TARGET_BRANCH}"
-            echo "Current HEAD: $(git rev-parse HEAD)"
-          else
-            echo "PR event - checking out release branch: ${TARGET_BRANCH}"
-            git checkout "${TARGET_BRANCH}"
-            git pull origin "${TARGET_BRANCH}"
-          fi
+          echo "Already on target release branch: ${TARGET_BRANCH}"
+          echo "Current HEAD: $(git rev-parse HEAD)"
+          echo "Pulling latest changes to ensure we have the merge"
+          git pull origin "${TARGET_BRANCH}"
           echo ""
           CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
           echo "Current branch: ${CURRENT_BRANCH}"
