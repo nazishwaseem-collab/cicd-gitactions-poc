@@ -28,7 +28,7 @@ output application/json
 		</ee:transform>
 		<logger level="INFO" doc:name="Log encrypted property" doc:id="4182720a-3efb-4eae-b0e2-78d4d439ccc3" message="#[&quot;Target host:  &quot; ++ p('secure::bos.host')]"/>
 
-		<logger level="INFO" doc:name="Logger" doc:id="b60bb8f4-408c-4008-ad1d-605a6f5b0d75" message='#["changes added for bugfix rc5"]'/>
+		<logger level="INFO" doc:name="Logger" doc:id="b60bb8f4-408c-4008-ad1d-605a6f5b0d75" message='#["changes added for rc5"]'/>
 
 		<logger level="INFO" doc:name="End Logger" doc:id="919b2a7c-9093-4343-a103-2b5769877cf1" message='#["ping-flow-completed "]' />
 	
