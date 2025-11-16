@@ -459,42 +459,41 @@ jobs:
       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')) ||
       (github.event_name == 'workflow_dispatch' && inputs.force_formal_release == true)
     steps:
-     - name: Checkout and Switch to Release Branch
-       uses: actions/checkout@v4
-       with:
-         fetch-depth: 0
-         token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout and Switch to Release Branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-     - name: Switch to Correct Release Branch
-       run: |
-         echo "============================================"
-         echo "SWITCHING TO RELEASE BRANCH"
-         echo "============================================"
-         if [ "${{ github.event_name }}" = "pull_request" ]; then
-           TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
+      - name: Switch to Correct Release Branch
+        run: |
+          echo "============================================"
+          echo "SWITCHING TO RELEASE BRANCH"
+          echo "============================================"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
            echo "PR Event - Target branch: ${TARGET_BRANCH}"
-         else
-           TARGET_BRANCH="${{ github.ref_name }}"
-           echo "Push Event - Branch: ${TARGET_BRANCH}"
-         fi
-         echo "Fetching all branches"
-         git fetch origin
-         echo "Checking out ${TARGET_BRANCH}"
-         git checkout "${TARGET_BRANCH}"
-         echo "Pulling latest changes"
-         git pull origin "${TARGET_BRANCH}"
-         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-         echo "Current branch: ${CURRENT_BRANCH}"
-         if [ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]; then
-           echo "ERROR: Failed to checkout correct branch"
-           exit 1
-         fi
-         echo "Latest commit:"
-         git log -1 --oneline
-         echo "============================================"
-         echo "SUCCESS: On ${CURRENT_BRANCH}"
-         echo "============================================"
-
+          else
+            TARGET_BRANCH="${{ github.ref_name }}"
+            echo "Push Event - Branch: ${TARGET_BRANCH}"
+          fi
+          echo "Fetching all branches"
+          git fetch origin
+          echo "Checking out ${TARGET_BRANCH}"
+          git checkout "${TARGET_BRANCH}"
+          echo "Pulling latest changes"
+          git pull origin "${TARGET_BRANCH}"
+          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+          echo "Current branch: ${CURRENT_BRANCH}"
+          if [ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]; then
+            echo "ERROR: Failed to checkout correct branch"
+            exit 1
+          fi
+          echo "Latest commit:"
+          git log -1 --oneline
+          echo "============================================"
+          echo "SUCCESS: On ${CURRENT_BRANCH}"
+          echo "============================================"
 
       - name: Detect Bugfix Merge
         id: detect_bugfix
