@@ -471,17 +471,30 @@ jobs:
       - name: Detect Bugfix Merge
         id: detect_bugfix
         run: |
-          echo "Determining if this is a bugfix merge by checking recent merge commits"
+          echo "Determining if this is a bugfix merge by checking the LATEST merge commit"
           IS_BUGFIX="false"
-          RECENT_MERGES=$(git log --merges --oneline -3 --pretty=format:"%s")
-          echo "Recent merge commits:"
-          echo "${RECENT_MERGES}"
-          if echo "${RECENT_MERGES}" | grep -iE 'merge.*(bugfix|hotfix)/'; then
+          # Get only the most recent merge commit message
+          LATEST_MERGE=$(git log --merges -1 --pretty=format:"%s" 2>/dev/null || echo "")
+          echo "Latest merge commit message:"
+          echo "${LATEST_MERGE}"
+          echo ""
+          # Check if the latest merge is specifically from bugfix or hotfix branch
+          if echo "${LATEST_MERGE}" | grep -iE 'merge.*(bugfix|hotfix)/' | grep -ivE 'develop'; then
             IS_BUGFIX="true"
+            echo "=========================================="
             echo "BUGFIX MERGE DETECTED"
-            echo "Will use release plugin for deployment"
+            echo "=========================================="
+            echo "Latest merge is from bugfix/hotfix branch"
+            echo "Will use Maven Release Plugin for deployment"
           else
+            echo "=========================================="
             echo "REGULAR RELEASE MERGE DETECTED"
+            echo "=========================================="
+            if echo "${LATEST_MERGE}" | grep -iE 'develop'; then
+              echo "Latest merge is from develop branch"
+            else
+              echo "Latest merge is NOT from bugfix/hotfix branch"
+            fi
             echo "Will use manual deployment workflow"
           fi
           echo "is_bugfix=${IS_BUGFIX}" >> $GITHUB_OUTPUT
