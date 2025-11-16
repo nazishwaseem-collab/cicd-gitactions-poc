@@ -459,72 +459,41 @@ jobs:
       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')) ||
       (github.event_name == 'workflow_dispatch' && inputs.force_formal_release == true)
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref }}
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+     - name: Checkout and Switch to Release Branch
+       uses: actions/checkout@v4
+       with:
+         fetch-depth: 0
+         token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify Correct Branch
-        run: |
-          echo "============================================"
-          echo "CHECKOUT RELEASE BRANCH WITH MERGED CODE"
-          echo "============================================"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            SOURCE_BRANCH="${{ github.event.pull_request.head.ref }}"
-            TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
-            MERGE_SHA="${{ github.event.pull_request.merge_commit_sha }}"
-          else
-            SOURCE_BRANCH="unknown"
-            TARGET_BRANCH="${{ github.ref_name }}"
-            MERGE_SHA="${{ github.sha }}"
-          fi
-          echo "PR Details:"
-          echo "  Source Branch: ${SOURCE_BRANCH}"
-          echo "  Target Branch (Release): ${TARGET_BRANCH}"
-          echo "  Merge Commit SHA: ${MERGE_SHA}"
-          echo ""
-          echo "Fetching all remote branches"
-          git fetch --all --prune
-          echo ""
-          echo "Already on target release branch: ${TARGET_BRANCH}"
-          echo "Current HEAD: $(git rev-parse HEAD)"
-          echo "Pulling latest changes to ensure we have the merge"
-          git pull origin "${TARGET_BRANCH}"
-          echo ""
-          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-          echo "Current branch: ${CURRENT_BRANCH}"
-          if [ "${CURRENT_BRANCH}" = "HEAD" ]; then
-            echo "ERROR: In detached HEAD state"
-            exit 1
-          fi
-          if [ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]; then
-            echo "ERROR: Not on expected branch"
-            echo "Expected: ${TARGET_BRANCH}"
-            echo "Current: ${CURRENT_BRANCH}"
-            exit 1
-          fi
-          echo "SUCCESS: On branch ${CURRENT_BRANCH}"
-          echo ""
-          echo "Latest commit on ${TARGET_BRANCH}:"
-          git log -1 --format="SHA: %H%nAuthor: %an%nDate: %ad%nMessage: %s"
-          echo ""
-          echo "Recent commit history:"
-          git log -3 --oneline --graph
-          echo ""
-          if git log -5 --format="%H" | grep -q "${MERGE_SHA}"; then
-            echo "SUCCESS: Merge commit found in recent history"
-          else
-            echo "WARNING: Merge SHA not in last 5 commits"
-          fi
-          echo ""
-          echo "Files changed in latest commit:"
-          git diff --name-only HEAD~1 HEAD | head -20 || echo "No changes"
-          echo ""
-          echo "============================================"
-          echo "VERIFICATION COMPLETE - On branch ${CURRENT_BRANCH}"
-          echo "============================================"
+     - name: Switch to Correct Release Branch
+       run: |
+         echo "============================================"
+         echo "SWITCHING TO RELEASE BRANCH"
+         echo "============================================"
+         if [ "${{ github.event_name }}" = "pull_request" ]; then
+           TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
+           echo "PR Event - Target branch: ${TARGET_BRANCH}"
+         else
+           TARGET_BRANCH="${{ github.ref_name }}"
+           echo "Push Event - Branch: ${TARGET_BRANCH}"
+         fi
+         echo "Fetching all branches"
+         git fetch origin
+         echo "Checking out ${TARGET_BRANCH}"
+         git checkout "${TARGET_BRANCH}"
+         echo "Pulling latest changes"
+         git pull origin "${TARGET_BRANCH}"
+         CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+         echo "Current branch: ${CURRENT_BRANCH}"
+         if [ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]; then
+           echo "ERROR: Failed to checkout correct branch"
+           exit 1
+         fi
+         echo "Latest commit:"
+         git log -1 --oneline
+         echo "============================================"
+         echo "SUCCESS: On ${CURRENT_BRANCH}"
+         echo "============================================"
 
 
       - name: Detect Bugfix Merge
