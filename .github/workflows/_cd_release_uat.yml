@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - 'bugfix/**'
-  pull_request:
-    types: [closed]
-    branches:
       - 'release/**'
   workflow_dispatch:
     inputs:
@@ -455,83 +452,41 @@ jobs:
       release_tag: ${{ steps.set_release_tag.outputs.tag }}
       is_bugfix_merge: ${{ steps.detect_bugfix.outputs.is_bugfix }}
     if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true && startsWith(github.event.pull_request.base.ref, 'release/')) ||
       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')) ||
       (github.event_name == 'workflow_dispatch' && inputs.force_formal_release == true)
     steps:
-      - name: Checkout and Switch to Release Branch
+      - name: Checkout Release Branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Switch to Correct Release Branch
+      - name: Verify Branch
         run: |
-          echo "============================================"
-          echo "SWITCHING TO RELEASE BRANCH"
-          echo "============================================"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            TARGET_BRANCH="${{ github.event.pull_request.base.ref }}"
-           echo "PR Event - Target branch: ${TARGET_BRANCH}"
-          else
-            TARGET_BRANCH="${{ github.ref_name }}"
-            echo "Push Event - Branch: ${TARGET_BRANCH}"
-          fi
-          echo "Fetching all branches"
-          git fetch origin
-          echo "Checking out ${TARGET_BRANCH}"
-          git checkout "${TARGET_BRANCH}"
-          echo "Pulling latest changes"
-          git pull origin "${TARGET_BRANCH}"
-          CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-          echo "Current branch: ${CURRENT_BRANCH}"
-          if [ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]; then
-            echo "ERROR: Failed to checkout correct branch"
-            exit 1
-          fi
+          echo "Current branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "Branch: ${{ github.ref_name }}"
           echo "Latest commit:"
           git log -1 --oneline
-          echo "============================================"
-          echo "SUCCESS: On ${CURRENT_BRANCH}"
-          echo "============================================"
 
       - name: Detect Bugfix Merge
         id: detect_bugfix
         run: |
-          echo "Determining if this is a bugfix merge"
+          echo "Determining if this is a bugfix merge by checking recent merge commits"
           IS_BUGFIX="false"
-          
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            SOURCE_BRANCH="${{ github.event.pull_request.head.ref }}"
-            echo "Pull Request Merge Detected"
-            echo "Source branch: ${SOURCE_BRANCH}"
-            echo "Target branch: ${{ github.event.pull_request.base.ref }}"
-            
-            if [[ "${SOURCE_BRANCH}" == bugfix/* ]] || [[ "${SOURCE_BRANCH}" == hotfix/* ]]; then
-              IS_BUGFIX="true"
-              echo "BUGFIX MERGE DETECTED"
-              echo "This is a bug fix from ${SOURCE_BRANCH}"
-              echo "Will use release plugin for deployment"
-            else
-              echo "REGULAR RELEASE MERGE DETECTED"
-              echo "This is a normal release merge from ${SOURCE_BRANCH}"
-              echo "Will use manual deployment workflow"
-            fi
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Manual workflow trigger"
-            echo "Checking recent merge history"
-            RECENT_MERGES=$(git log --merges --oneline -3 --pretty=format:"%s")
-            echo "Recent merges:"
-            echo "${RECENT_MERGES}"
-            
-            if echo "${RECENT_MERGES}" | grep -iE 'merge.*(bugfix|hotfix)/'; then
-              IS_BUGFIX="true"
-              echo "Bugfix merge found in recent history"
-            fi
+          RECENT_MERGES=$(git log --merges --oneline -3 --pretty=format:"%s")
+          echo "Recent merge commits:"
+          echo "${RECENT_MERGES}"
+          if echo "${RECENT_MERGES}" | grep -iE 'merge.*(bugfix|hotfix)/'; then
+            IS_BUGFIX="true"
+            echo "BUGFIX MERGE DETECTED"
+            echo "Will use release plugin for deployment"
+          else
+            echo "REGULAR RELEASE MERGE DETECTED"
+            echo "Will use manual deployment workflow"
           fi
-          
           echo "is_bugfix=${IS_BUGFIX}" >> $GITHUB_OUTPUT
           echo "Final decision: IS_BUGFIX=${IS_BUGFIX}"
+
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
@@ -913,9 +868,8 @@ jobs:
       - name: Push Release Changes to Remote
         run: |
           echo "Pushing release changes to remote"
-          CURRENT_BRANCH="${{ github.event.pull_request.base.ref }}"
+          CURRENT_BRANCH="${{ github.ref_name }}"
           echo "Current branch: ${CURRENT_BRANCH}"
-          git checkout ${CURRENT_BRANCH}
           git push origin HEAD:${CURRENT_BRANCH}
           git push origin --tags
           echo "Tag ${{ env.RELEASE_TAG }} pushed"
