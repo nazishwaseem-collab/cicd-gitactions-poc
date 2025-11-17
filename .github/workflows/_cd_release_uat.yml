@@ -506,6 +506,7 @@ jobs:
             echo "Will use manual deployment workflow"
           fi
           echo "is_bugfix=${IS_BUGFIX}" >> $GITHUB_OUTPUT
+          echo "IS_BUGFIX=${IS_BUGFIX}" >> $GITHUB_ENV
           echo "Final decision: IS_BUGFIX=${IS_BUGFIX}"
 
       - name: Configure Git
@@ -694,11 +695,11 @@ jobs:
           echo "is_bugfix output value: '${{ steps.detect_bugfix.outputs.is_bugfix }}'"
           echo "Current POM version: ${CURRENT_POM_VERSION}"
           if [ "${IS_BUGFIX}" = "true" ]; then
-            echo "✓ Decision: BUGFIX FLOW - will SKIP early release:prepare"
-            echo "✓ POM should still be SNAPSHOT version"
+            echo "Decision: BUGFIX FLOW - will SKIP early release:prepare"
+            echo "POM should still be SNAPSHOT version"
           else
-            echo "✓ Decision: REGULAR FLOW - will RUN early release:prepare"
-            echo "✓ POM will be converted from SNAPSHOT to release version"
+            echo "Decision: REGULAR FLOW - will RUN early release:prepare"
+            echo "POM will be converted from SNAPSHOT to release version"
           fi
           echo "=========================================="
 
@@ -803,7 +804,7 @@ jobs:
             exit 1
           fi
           
-          echo "✓ API Instance ID: ${API_INSTANCE_ID}"
+          echo "API Instance ID: ${API_INSTANCE_ID}"
           echo "BUGFIX_API_ID=${API_INSTANCE_ID}" >> $GITHUB_ENV
 
       - name: Execute Maven Release (Bugfix Flow - Prepare + Perform)
@@ -833,7 +834,7 @@ jobs:
             exit 1
           fi
           
-          echo "✓ POM version is SNAPSHOT - proceeding with release"
+          echo "POM version is SNAPSHOT - proceeding with release"
           
           API_INSTANCE_ID="${BUGFIX_API_ID}"
           echo "Using API Instance ID: ${API_INSTANCE_ID}"
@@ -853,12 +854,12 @@ jobs:
           echo "=== Step 1: Release Prepare ==="
           echo "Converting SNAPSHOT version to release version and creating tag"
           mvn -B release:prepare -s .maven/settings.xml -P${TARGET_ENV} -DpushChanges=false -Darguments="-DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id=${CONNECTED_APP_CLIENT_ID} -Dclient.secret=${CONNECTED_APP_CLIENT_SECRET} -Dnexus.username=${NEXUS_USERNAME} -Dnexus.password=${NEXUS_PASSWORD}" -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
-          echo "✓ Release prepare completed"
+          echo "Release prepare completed"
           
           # Get the release tag
           RELEASE_TAG=$(git describe --tags --abbrev=0)
           echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
-          echo "✓ Created release tag: ${RELEASE_TAG}"
+          echo "Created release tag: ${RELEASE_TAG}"
           
           # Copy CloudHub properties into checkout folder
           mkdir -p target/checkout
@@ -868,7 +869,7 @@ jobs:
           echo "=== Step 2: Release Perform ==="
           echo "Building and deploying the release"
           mvn -B release:perform -s .maven/settings.xml -P${TARGET_ENV} -DlocalCheckout=true -Denv=${TARGET_ENV} -Dapi.id="${API_INSTANCE_ID}" -Dmule.key="${DECRYPTION_KEY}" -Danypoint.organization="${ORG_ID}" -Danypoint.environment="${ANYPOINT_ENV}" -Danypoint.platform.client.id="${ANYPOINT_PLATFORM_CLIENT_ID}" -Danypoint.platform.client.secret="${ANYPOINT_PLATFORM_CLIENT_SECRET}" -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}" -Darguments="-DskipMunitTests -Dmule.key=${DECRYPTION_KEY} -Dapi.id=${API_INSTANCE_ID} -Danypoint.organization=${ORG_ID} -Danypoint.environment=${ANYPOINT_ENV}"
-          echo "✓ Release perform completed with full deployment"
+          echo "Release perform completed with full deployment"
 
       - name: Get Release Tag (Bugfix Flow Only)
         if: env.IS_BUGFIX == 'true'
@@ -899,7 +900,7 @@ jobs:
           
           if [ "${IS_BUGFIX}" = "true" ]; then
             echo "Method: Maven Release Plugin"
-            echo "Status: ✓ Deployment completed via release:perform"
+            echo "Status: Deployment completed via release:perform"
           else
             echo "Method: Manual deployment workflow"
             echo "Status: Proceeding to manual deployment steps..."
@@ -923,7 +924,7 @@ jobs:
           git log --oneline -3
           
           git push origin HEAD:${CURRENT_BRANCH}
-          echo "✓ Pushed both release:prepare commits to ${CURRENT_BRANCH}"
+          echo "Pushed both release:prepare commits to ${CURRENT_BRANCH}"
 
       # ============================================================
       # REGULAR FLOW: Manual deployment steps
@@ -960,7 +961,7 @@ jobs:
               exit ${EXIT_CODE}
             fi
           else
-            echo "✓ Successfully deployed to Exchange"
+            echo "Successfully deployed to Exchange"
           fi
 
       - name: API Manager Orchestration (Regular Release Only)
@@ -1009,7 +1010,7 @@ jobs:
             exit 1
           fi
           
-          echo "✓ API Instance ID: ${API_INSTANCE_ID}"
+          echo "API Instance ID: ${API_INSTANCE_ID}"
           echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
           echo "$API_INSTANCE_ID" > api_instance_id.txt
 
@@ -1027,7 +1028,7 @@ jobs:
           echo "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" >> cloudhub-properties.txt
           
           mvn -B mule:deploy -s .maven/settings.xml -P${TARGET_ENV} -DmuleDeploy -DskipMunitTests -Danypoint.organization=${ORG_ID} -Danypoint.environment="${ANYPOINT_ENV}" -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Danypoint.platform.client.id="${ANYPOINT_PLATFORM_CLIENT_ID}" -Danypoint.platform.client.secret="${ANYPOINT_PLATFORM_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dapi.id="${API_INSTANCE_ID}" -Dcloudhub2.applicationPropertiesFile=cloudhub-properties.txt
-          echo "✓ CloudHub deployment completed"
+          echo "CloudHub deployment completed"
 
       - name: Push Release Changes to Remote
         run: |
@@ -1041,6 +1042,6 @@ jobs:
           git push origin HEAD:${CURRENT_BRANCH}
           git push origin --tags
           
-          echo "✓ Successfully pushed:"
+          echo "Successfully pushed:"
           echo "  - Branch updates to ${CURRENT_BRANCH}"
           echo "  - Tag ${{ env.RELEASE_TAG }}"
