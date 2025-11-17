@@ -683,6 +683,23 @@ jobs:
           anypoint-cli-v4 conf client_secret "${CONNECTED_APP_CLIENT_SECRET}"
           anypoint-cli-v4 conf organization "${ORG_ID}"
 
+      - name: Verify Flow Decision
+        run: |
+          IS_BUGFIX="${{ steps.detect_bugfix.outputs.is_bugfix }}"
+          CURRENT_POM_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "=========================================="
+          echo "FLOW DECISION VERIFICATION"
+          echo "=========================================="
+          echo "is_bugfix output value: '${IS_BUGFIX}'"
+          echo "Current POM version: ${CURRENT_POM_VERSION}"
+          if [ "${IS_BUGFIX}" = "true" ]; then
+            echo "Decision: BUGFIX FLOW - will SKIP early release:prepare"
+            echo "POM should still be SNAPSHOT version"
+          else
+            echo "Decision: REGULAR FLOW - will RUN early release:prepare"
+            echo "POM will be converted from SNAPSHOT to release version"
+          fi
+          echo "=========================================="
       # ============================================================
       # REGULAR FLOW: Run release:prepare ONLY for non-bugfix merges
       # ============================================================
@@ -795,6 +812,26 @@ jobs:
           echo "=========================================="
           echo "This is the ONLY place where release:prepare runs for bugfix merges"
           echo "Current branch: $(git rev-parse --abbrev-ref HEAD)"
+
+          # CRITICAL CHECK: Verify POM is still SNAPSHOT
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "Current POM version: ${CURRENT_VERSION}"
+          
+          if [[ ! "${CURRENT_VERSION}" =~ -SNAPSHOT$ ]]; then
+            echo "=========================================="
+            echo "ERROR: POM version is NOT SNAPSHOT!"
+            echo "=========================================="
+            echo "Expected: ${CURRENT_VERSION}-SNAPSHOT"
+            echo "Found: ${CURRENT_VERSION}"
+            echo ""
+            echo "This means release:prepare already ran earlier in the workflow!"
+            echo "The early release:prepare step should have been SKIPPED for bugfix merges."
+            echo "Check the 'Execute Maven Release Prepare (Regular Flow Only)' step."
+            echo "=========================================="
+            exit 1
+          fi
+          
+          echo "POM version is SNAPSHOT - proceeding with release"
           
           API_INSTANCE_ID="${BUGFIX_API_ID}"
           echo "Using API Instance ID: ${API_INSTANCE_ID}"
