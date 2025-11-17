@@ -1,0 +1,955 @@
+name: CD - Release & UAT Deployment
+
+on:
+  push:
+    branches:
+      - 'bugfix/**'
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      force_formal_release:
+        description: 'Force formal release preparation and deployment'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  JAVA_VERSION: '17'
+  TARGET_ENV: 'UAT'
+  ANYPOINT_ENV: 'UAT'
+
+jobs:
+  snapshot_deploy_uat:
+    name: Snapshot Deploy to UAT (Bug Fixes)
+    runs-on: ubuntu-latest
+    environment: UAT
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/bugfix/')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
+
+      - name: Load Environment Secrets
+        run: |
+          echo "Loading UAT secrets from GitHub Secrets"
+          echo "ORG_ID=${{ secrets.ORG_ID }}" >> $GITHUB_ENV
+          echo "CONNECTED_APP_CLIENT_ID=${{ secrets.CONNECTED_APP_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "CONNECTED_APP_CLIENT_SECRET=${{ secrets.CONNECTED_APP_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "ANYPOINT_PLATFORM_CLIENT_ID=${{ secrets.ANYPOINT_PLATFORM_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ANYPOINT_PLATFORM_CLIENT_SECRET=${{ secrets.ANYPOINT_PLATFORM_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "DECRYPTION_KEY=${{ secrets.DECRYPTION_KEY }}" >> $GITHUB_ENV
+          echo "NEXUS_USERNAME=${{ secrets.NEXUS_USERNAME }}" >> $GITHUB_ENV
+          echo "NEXUS_PASSWORD=${{ secrets.NEXUS_PASSWORD }}" >> $GITHUB_ENV
+          echo "BOS_HOST=${{ secrets.BOS_HOST }}" >> $GITHUB_ENV
+          echo "BOS_PORT=${{ secrets.BOS_PORT }}" >> $GITHUB_ENV
+
+      - name: Get Current Version
+        run: |
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "CURRENT_VERSION=${CURRENT_VERSION}" >> $GITHUB_ENV
+          echo "Current SNAPSHOT version for bugfix: ${CURRENT_VERSION}"
+
+      - name: Create Unique SNAPSHOT Version for Iterative Deployment
+        run: |
+          ORIGINAL_VERSION="${{ env.CURRENT_VERSION }}"
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          # Extract base version without -SNAPSHOT
+          BASE_VERSION=$(echo "${ORIGINAL_VERSION}" | sed 's/-SNAPSHOT//')
+          # Create unique SNAPSHOT version with timestamp
+          UNIQUE_VERSION="${BASE_VERSION}-${TIMESTAMP}-SNAPSHOT"
+          echo "Original version: ${ORIGINAL_VERSION}"
+          echo "Unique version for this deployment: ${UNIQUE_VERSION}"
+          # Update POM with unique version
+          mvn versions:set -DnewVersion=${UNIQUE_VERSION} -DgenerateBackupPoms=false
+          # Verify the change
+          NEW_POM_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "Updated POM version: ${NEW_POM_VERSION}"
+          # Update environment variable
+          echo "CURRENT_VERSION=${UNIQUE_VERSION}" >> $GITHUB_ENV
+          echo "ORIGINAL_VERSION=${ORIGINAL_VERSION}" >> $GITHUB_ENV
+
+      - name: Setup Python for Generic Property Encryption
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Required Python Packages
+        run: |
+          pip install pyyaml pycryptodome requests
+          echo "Python packages installed"
+
+      - name: Download Mule Secure Properties Tool
+        run: |
+          echo "Downloading Mule Secure Properties Tool"
+          mkdir -p /tmp/mule-tools
+          cd /tmp/mule-tools
+          curl -sL https://docs.mulesoft.com/mule-runtime/latest/_attachments/secure-properties-tool.jar -o secure-properties-tool.jar
+          if [ ! -f "secure-properties-tool.jar" ] || [ ! -s "secure-properties-tool.jar" ]; then
+            echo "Failed to download secure-properties-tool.jar"
+            exit 1
+          fi
+          echo "SECURE_TOOL_PATH=/tmp/mule-tools/secure-properties-tool.jar" >> $GITHUB_ENV
+          echo "Mule Secure Properties Tool downloaded successfully"
+
+      - name: Encrypt All Secure Properties
+        run: |
+          python3 << 'ENCRYPT_SCRIPT'
+          import yaml
+          import os
+          import sys
+          import subprocess
+          from pathlib import Path
+
+          def log_info(msg): print(f"INFO: {msg}")
+          def log_success(msg): print(f"SUCCESS: {msg}")
+          def log_error(msg): print(f"ERROR: {msg}", file=sys.stderr)
+          def log_warn(msg): print(f"WARN: {msg}")
+
+          def encrypt_with_jar(plaintext, key, tool_path):
+              try:
+                  cmd = ['java', '-cp', tool_path, 'com.mulesoft.tools.SecurePropertiesTool', 'string', 'encrypt', 'AES', 'CBC', key, plaintext]
+                  result = subprocess.run(cmd, capture_output=True, text=True)
+                  if result.returncode != 0:
+                      log_error(result.stderr)
+                      return None
+                  return result.stdout.strip()
+              except Exception as e:
+                  log_error(f"Encryption failed: {str(e)}")
+                  return None
+
+          def process_dict(node, path, secrets, key, tool_path, stats):
+              for k, v in node.items():
+                  full_path = f"{path}.{k}" if path else k
+                  if isinstance(v, str):
+                      patterns = ['host','port','password','username','user','secret','key','token','credential','pwd']
+                      if any(p in k.lower() for p in patterns):
+                          env_key = full_path.upper().replace('.', '_')
+                          log_info(f"Found property: {full_path} looking for env var {env_key}")
+                          if env_key in secrets:
+                              encrypted = encrypt_with_jar(secrets[env_key], key, tool_path)
+                              if encrypted:
+                                  node[k] = f"![{encrypted}]"
+                                  stats["encrypted"] += 1
+                                  log_success(f"Encrypted: {full_path}")
+                              else:
+                                  stats["failed"].append(full_path)
+                                  log_error(f"Failed to encrypt: {full_path}")
+                          else:
+                              stats["skipped"].append(full_path)
+                              log_warn(f"Missing env var {env_key} value left unencrypted")
+                  elif isinstance(v, dict):
+                      process_dict(v, full_path, secrets, key, tool_path, stats)
+
+          def main():
+              env = os.getenv('TARGET_ENV', 'UAT').upper()
+              secure_file = f"src/main/resources/properties/config-secure-{env}.yaml"
+              if not Path(secure_file).exists():
+                  log_error(f"Secure config file missing: {secure_file}")
+                  sys.exit(1)
+              key = os.getenv('DECRYPTION_KEY')
+              tool_path = os.getenv('SECURE_TOOL_PATH')
+              if not key or not tool_path:
+                  log_error("Missing DECRYPTION_KEY or SECURE_TOOL_PATH")
+                  sys.exit(1)
+              secrets = {k: v for k, v in os.environ.items() if k.isupper()}
+              log_info(f"Loaded {len(secrets)} env variables")
+              backup = secure_file + ".backup"
+              Path(secure_file).replace(backup)
+              log_info(f"Backup created: {backup}")
+              data = yaml.safe_load(open(backup))
+              stats = {"encrypted": 0, "skipped": [], "failed": []}
+              process_dict(data, "", secrets, key, tool_path, stats)
+              yaml.dump(data, open(secure_file, "w"), sort_keys=False)
+              log_success(f"Encrypted {stats['encrypted']} properties")
+              print(f"Encryption Summary - Environment: {env}, Encrypted: {stats['encrypted']}, Skipped: {len(stats['skipped'])}, Failed: {len(stats['failed'])}")
+
+          if __name__ == "__main__":
+              main()
+          ENCRYPT_SCRIPT
+        env:
+          TARGET_ENV: ${{ env.TARGET_ENV }}
+          DECRYPTION_KEY: ${{ secrets.DECRYPTION_KEY }}
+          SECURE_TOOL_PATH: ${{ env.SECURE_TOOL_PATH }}
+          BOS_HOST: ${{ secrets.BOS_HOST }}
+          BOS_PORT: ${{ secrets.BOS_PORT }}
+
+      - name: Run MUnit Tests
+        run: |
+          echo "Running MUnit tests for bugfix validation in UAT environment"
+          mvn -B test -s .maven/settings.xml -P${TARGET_ENV} -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}" -Ddecryption.key="${DECRYPTION_KEY}" 2>&1 | tee munit-output.log
+          COVERAGE=$(grep "Application Coverage:" munit-output.log | grep -oP '\d+\.\d+(?=%)' | tail -1 || echo "")
+          echo "COVERAGE=${COVERAGE}" >> $GITHUB_ENV
+
+      - name: Check MUnit Coverage Threshold
+        run: |
+          THRESHOLD=$(mvn help:evaluate -Dexpression=munit.coverage.threshold -q -DforceStdout -P${TARGET_ENV})
+          COVERAGE="${{ env.COVERAGE }}"
+          if [ -z "$COVERAGE" ]; then
+            echo "Error: Could not extract coverage percentage"
+            exit 1
+          fi
+          echo "Current MUnit Coverage: ${COVERAGE}%"
+          echo "Required Threshold: ${THRESHOLD}%"
+          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+            echo "MUnit coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
+            exit 1
+          fi
+
+      - name: Build with Maven
+        run: |
+          echo "Building bugfix application for UAT snapshot deployment"
+          mvn -B clean package -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+
+      - name: Upload SNAPSHOT to Exchange
+        run: |
+          echo "Uploading unique SNAPSHOT artifact to Exchange for CloudHub 2.0 deployment"
+          echo "Version: ${{ env.CURRENT_VERSION }}"
+          mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+          echo "Successfully uploaded SNAPSHOT to Exchange"
+
+      - name: Install Anypoint CLI
+        run: |
+          npm install -g anypoint-cli-v4
+          sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Configure Anypoint CLI
+        run: |
+          anypoint-cli-v4 conf client_id "${CONNECTED_APP_CLIENT_ID}"
+          anypoint-cli-v4 conf client_secret "${CONNECTED_APP_CLIENT_SECRET}"
+          anypoint-cli-v4 conf organization "${ORG_ID}"
+
+      - name: Manage API Instance (UAT)
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          BASE_VERSION=$(echo "${{ env.ORIGINAL_VERSION }}" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+          ENDPOINT_URI=$(mvn help:evaluate -Dexpression=api.manager.endpoint.uri -q -DforceStdout -P${TARGET_ENV})
+          DEPLOYMENT_TYPE=$(mvn help:evaluate -Dexpression=api.manager.deployment.type -q -DforceStdout -P${TARGET_ENV})
+          API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
+          API_SCHEME=$(mvn help:evaluate -Dexpression=api.manager.scheme -q -DforceStdout -P${TARGET_ENV})
+          API_PORT=$(mvn help:evaluate -Dexpression=api.manager.port -q -DforceStdout -P${TARGET_ENV})
+          echo "API Configuration: Endpoint=${ENDPOINT_URI}, Type=${DEPLOYMENT_TYPE}, Path=${API_PATH}, Scheme=${API_SCHEME}, Port=${API_PORT}"
+          echo "Managing API for bugfix testing: $REPO_NAME version $BASE_VERSION"
+          API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id' || echo "")
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            echo "Creating new API instance for bugfix testing"
+            CREATE_OUTPUT=$(anypoint-cli-v4 api-mgr:api:manage "$REPO_NAME" "$BASE_VERSION" --environment "${ANYPOINT_ENV}" --deploymentType "$DEPLOYMENT_TYPE" --endpointUri "$ENDPOINT_URI" --path "$API_PATH" --scheme "$API_SCHEME" --port "$API_PORT" --muleVersion4OrAbove --output json 2>&1)
+            API_INSTANCE_ID=$(echo "$CREATE_OUTPUT" | jq -r '.id // .apiInstanceId // empty' 2>/dev/null || echo "")
+            if [ -z "$API_INSTANCE_ID" ]; then
+              sleep 5
+              API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id')
+            fi
+          else
+            echo "API instance exists with ID: $API_INSTANCE_ID"
+          fi
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            echo "ERROR: Failed to create or find API instance"
+            exit 1
+          fi
+          echo "Successfully obtained API Instance ID: ${API_INSTANCE_ID}"
+          echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
+          echo "$API_INSTANCE_ID" > api_instance_id.txt
+
+      - name: Deploy Bugfix SNAPSHOT to UAT
+        run: |
+          API_INSTANCE_ID=$(cat api_instance_id.txt)
+          echo "Deploying bugfix SNAPSHOT to UAT with API ID ${API_INSTANCE_ID}"
+          echo "Version: ${{ env.CURRENT_VERSION }}"
+          echo "This is an iterative bugfix deployment from Exchange"
+          echo "env=${TARGET_ENV}" > cloudhub-properties.txt
+          echo "api.id=${API_INSTANCE_ID}" >> cloudhub-properties.txt
+          echo "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" >> cloudhub-properties.txt
+          echo "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" >> cloudhub-properties.txt
+          mvn -B mule:deploy -s .maven/settings.xml -P${TARGET_ENV} -DmuleDeploy -DskipMunitTests -Danypoint.organization=${ORG_ID} -Danypoint.environment="${ANYPOINT_ENV}" -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Danypoint.platform.client.id="${ANYPOINT_PLATFORM_CLIENT_ID}" -Danypoint.platform.client.secret="${ANYPOINT_PLATFORM_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dapi.id="${API_INSTANCE_ID}" -Dcloudhub2.applicationPropertiesFile=cloudhub-properties.txt
+
+      - name: Deployment Summary
+        run: |
+          echo "=========================================="
+          echo "UAT BUGFIX SNAPSHOT DEPLOYMENT COMPLETED"
+          echo "=========================================="
+          echo "Original Version: ${{ env.ORIGINAL_VERSION }}"
+          echo "Deployed Version: ${{ env.CURRENT_VERSION }}"
+          echo "Environment: ${ANYPOINT_ENV}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "API Instance ID: $(cat api_instance_id.txt)"
+          echo ""
+          echo "NOTE: Iterative bugfix deployment with unique timestamp"
+          echo "- Timestamp-based SNAPSHOT for iterative testing"
+          echo "- Each push creates new deployable artifact"
+          echo "- Uploaded to Exchange and deployed to CloudHub 2.0"
+          echo "=========================================="
+          
+  backport_to_develop:
+    name: Backport Bug Fixes to Develop Branch
+    runs-on: ubuntu-latest
+    needs: formal_release_candidate_uat
+    if: success() && needs.formal_release_candidate_uat.outputs.is_bugfix_merge == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get Release Branch and Version
+        run: |
+          RELEASE_BRANCH="${{ github.ref_name }}"
+          RELEASE_TAG="${{ needs.formal_release_candidate_uat.outputs.release_tag }}"
+          echo "RELEASE_BRANCH=${RELEASE_BRANCH}" >> $GITHUB_ENV
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
+          echo "Backport triggered for bug fix in branch: ${RELEASE_BRANCH}"
+          echo "Release tag: ${RELEASE_TAG}"
+
+      - name: Verify Bugfix Context
+        run: |
+          echo "This backport was triggered because a bugfix was detected"
+          echo "Detection method: Branch name pattern matching"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "Source branch: ${{ github.event.pull_request.head.ref }}"
+          fi
+
+      - name: Create Backport Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: Backport bug fixes from ${{ env.RELEASE_BRANCH }} to develop"
+          title: "[Backport] Bug fixes from ${{ env.RELEASE_BRANCH }} to develop"
+          body: |
+            ## Automated Backport - Bug Fixes
+            
+            This PR backports bug fixes from the release branch to develop to prevent regression in future releases.
+            
+            Details
+            - Release Branch: ${{ env.RELEASE_BRANCH }}
+            - Release Tag: ${{ env.RELEASE_TAG }}
+            - Target Branch: develop
+            - Trigger: Bugfix merge detected in release branch
+            
+            ### Action Required by Release Manager
+            
+            1. Review the Changes
+            - Verify that only bug fixes are included
+            - Check for any conflicts with ongoing development in develop
+            
+            2. Choose Backport Strategy
+            
+            Option A: Cherry-Pick (Recommended for targeted fixes)
+            git checkout develop
+            git cherry-pick commit-hash
+            - Use this when you want to backport specific commits only
+            - Provides more control over what gets merged
+            - Better for complex release branches with multiple unrelated changes
+            
+            Option B: Merge Release Branch
+            git checkout develop
+            git merge ${{ env.RELEASE_BRANCH }}
+            - Use this when branches are closely aligned
+            - Simpler when all changes in release should go to develop
+            - Appropriate when release only contains the bug fixes
+            
+            3. Resolve Conflicts (if any)
+            - Manually resolve any merge conflicts
+            - Test the resolution locally
+            - Ensure MUnit tests pass
+            
+            4. Approve and Merge
+            - After validation, approve this PR
+            - Merge to develop branch
+            
+            Why This Matters
+            
+            Backporting bug fixes to develop ensures:
+            - Future releases include the fix
+            - Developers working on develop have the latest corrections
+            - Same bugs do not reappear in next release cycle
+            - Code consistency across branches
+            
+            Automated by GitHub Actions CI/CD Pipeline
+            Workflow: Release & UAT Deployment
+          branch: backport/${{ env.RELEASE_BRANCH }}-to-develop-${{ github.run_number }}
+          base: develop
+          delete-branch: true
+          labels: |
+            backport
+            bugfix
+            automated
+            requires-review
+            release-manager
+
+      - name: Backport Initiation Summary
+        run: |
+          echo "Backport PR Created Successfully"
+          echo "Release Branch: ${{ env.RELEASE_BRANCH }}"
+          echo "Release Tag: ${{ env.RELEASE_TAG }}"
+          echo "Target: develop branch"
+          echo ""
+          echo "NEXT STEPS:"
+          echo "1. Release Manager will receive notification"
+          echo "2. Manual review and approval required"
+          echo "3. Choose appropriate backport strategy (cherry-pick or merge)"
+          echo "4. Resolve any conflicts"
+          echo "5. Approve and merge to develop"
+          echo ""
+          echo "This ensures bug fixes are included in future releases"Stdout -P${TARGET_ENV})
+          API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
+          API_SCHEME=$(mvn help:evaluate -Dexpression=api.manager.scheme -q -DforceStdout -P${TARGET_ENV})
+          API_PORT=$(mvn help:evaluate -Dexpression=api.manager.port -q -DforceStdout -P${TARGET_ENV})
+          echo "Managing API for bugfix testing: $REPO_NAME version $BASE_VERSION"
+          API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id' || echo "")
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            echo "Creating new API instance for bugfix testing"
+            CREATE_OUTPUT=$(anypoint-cli-v4 api-mgr:api:manage "$REPO_NAME" "$BASE_VERSION" --environment "${ANYPOINT_ENV}" --deploymentType "$DEPLOYMENT_TYPE" --endpointUri "$ENDPOINT_URI" --path "$API_PATH" --scheme "$API_SCHEME" --port "$API_PORT" --muleVersion4OrAbove --output json 2>&1)
+            API_INSTANCE_ID=$(echo "$CREATE_OUTPUT" | jq -r '.id // .apiInstanceId // empty' 2>/dev/null || echo "")
+            if [ -z "$API_INSTANCE_ID" ]; then
+              sleep 5
+              API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id')
+            fi
+          fi
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            echo "ERROR: Failed to create or find API instance for bugfix"
+            exit 1
+          fi
+          echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
+          echo "$API_INSTANCE_ID" > api_instance_id.txt
+
+      - name: Deploy Bugfix to UAT Environment
+        run: |
+          API_INSTANCE_ID=$(cat api_instance_id.txt)
+          echo "Deploying bugfix SNAPSHOT to UAT with API ID ${API_INSTANCE_ID}"
+          echo "env=${TARGET_ENV}" > cloudhub-properties.txt
+          echo "api.id=${API_INSTANCE_ID}" >> cloudhub-properties.txt
+          echo "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" >> cloudhub-properties.txt
+          echo "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" >> cloudhub-properties.txt
+          mvn -B mule:deploy -s .maven/settings.xml -P${TARGET_ENV} -DmuleDeploy -DskipMunitTests -Danypoint.organization=${ORG_ID} -Danypoint.environment="${ANYPOINT_ENV}" -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Danypoint.platform.client.id="${ANYPOINT_PLATFORM_CLIENT_ID}" -Danypoint.platform.client.secret="${ANYPOINT_PLATFORM_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dapi.id="${API_INSTANCE_ID}" -Dcloudhub2.applicationPropertiesFile=cloudhub-properties.txt
+
+      - name: Deployment Summary
+        run: |
+          echo "UAT Bugfix Snapshot deployment completed"
+          echo "Version: ${{ env.CURRENT_VERSION }}"
+          echo "Environment: ${ANYPOINT_ENV}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Note: This is an iterative bugfix deployment. No versioning or tagging occurred."
+
+  formal_release_candidate_uat:
+    name: Formal Release Candidate to UAT
+    runs-on: ubuntu-latest
+    environment: UAT
+    outputs:
+      release_tag: ${{ steps.set_release_tag.outputs.tag }}
+      is_bugfix_merge: ${{ steps.detect_bugfix.outputs.is_bugfix }}
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.force_formal_release == true)
+    steps:
+      - name: Checkout Release Branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Branch
+        run: |
+          echo "Current branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Latest commit:"
+          git log -1 --oneline
+
+      - name: Detect Bugfix Merge
+        id: detect_bugfix
+        run: |
+          echo "Determining if this is a bugfix merge by checking the LATEST merge commit"
+          IS_BUGFIX="false"
+          # Get only the most recent merge commit message
+          LATEST_MERGE=$(git log --merges -1 --pretty=format:"%s" 2>/dev/null || echo "")
+          echo "Latest merge commit message:"
+          echo "${LATEST_MERGE}"
+          echo ""
+          # Check if the latest merge is specifically from bugfix or hotfix branch
+          if echo "${LATEST_MERGE}" | grep -iE 'merge.*(bugfix|hotfix)/' | grep -ivE 'develop'; then
+            IS_BUGFIX="true"
+            echo "=========================================="
+            echo "BUGFIX MERGE DETECTED"
+            echo "=========================================="
+            echo "Latest merge is from bugfix/hotfix branch"
+            echo "Will use Maven Release Plugin for deployment"
+          else
+            echo "=========================================="
+            echo "REGULAR RELEASE MERGE DETECTED"
+            echo "=========================================="
+            if echo "${LATEST_MERGE}" | grep -iE 'develop'; then
+              echo "Latest merge is from develop branch"
+            else
+              echo "Latest merge is NOT from bugfix/hotfix branch"
+            fi
+            echo "Will use manual deployment workflow"
+          fi
+          echo "is_bugfix=${IS_BUGFIX}" >> $GITHUB_OUTPUT
+          echo "Final decision: IS_BUGFIX=${IS_BUGFIX}"
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Cache Maven packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-maven-
+
+      - name: Load Environment Secrets
+        run: |
+          echo "Loading UAT secrets for formal release..."
+          echo "ORG_ID=${{ secrets.ORG_ID }}" >> $GITHUB_ENV
+          echo "CONNECTED_APP_CLIENT_ID=${{ secrets.CONNECTED_APP_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "CONNECTED_APP_CLIENT_SECRET=${{ secrets.CONNECTED_APP_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "ANYPOINT_PLATFORM_CLIENT_ID=${{ secrets.ANYPOINT_PLATFORM_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ANYPOINT_PLATFORM_CLIENT_SECRET=${{ secrets.ANYPOINT_PLATFORM_CLIENT_SECRET }}" >> $GITHUB_ENV
+          echo "DECRYPTION_KEY=${{ secrets.DECRYPTION_KEY }}" >> $GITHUB_ENV
+          echo "NEXUS_USERNAME=${{ secrets.NEXUS_USERNAME }}" >> $GITHUB_ENV
+          echo "NEXUS_PASSWORD=${{ secrets.NEXUS_PASSWORD }}" >> $GITHUB_ENV
+          echo "BOS_HOST=${{ secrets.BOS_HOST }}" >> $GITHUB_ENV
+          echo "BOS_PORT=${{ secrets.BOS_PORT }}" >> $GITHUB_ENV
+
+      - name: Setup Python for Generic Property Encryption
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Required Python Packages
+        run: |
+          pip install pyyaml pycryptodome requests
+
+      - name: Download Mule Secure Properties Tool
+        run: |
+          echo "Downloading Mule Secure Properties Tool..."
+          mkdir -p /tmp/mule-tools
+          cd /tmp/mule-tools
+          curl -sL https://docs.mulesoft.com/mule-runtime/latest/_attachments/secure-properties-tool.jar -o secure-properties-tool.jar
+          if [ ! -f "secure-properties-tool.jar" ] || [ ! -s "secure-properties-tool.jar" ]; then
+            echo "Failed to download secure-properties-tool.jar"
+            exit 1
+          fi
+          echo "SECURE_TOOL_PATH=/tmp/mule-tools/secure-properties-tool.jar" >> $GITHUB_ENV
+
+      - name: Encrypt All Secure Properties
+        run: |
+          python3 << 'ENCRYPT_SCRIPT'
+          import yaml
+          import os
+          import sys
+          import subprocess
+          from pathlib import Path
+
+          def log_info(msg): print(f"INFO: {msg}")
+          def log_success(msg): print(f"SUCCESS: {msg}")
+          def log_error(msg): print(f"ERROR: {msg}", file=sys.stderr)
+          def log_warn(msg): print(f"WARN: {msg}")
+
+          def encrypt_with_jar(plaintext, key, tool_path):
+              try:
+                  cmd = ['java', '-cp', tool_path, 'com.mulesoft.tools.SecurePropertiesTool', 'string', 'encrypt', 'AES', 'CBC', key, plaintext]
+                  result = subprocess.run(cmd, capture_output=True, text=True)
+                  if result.returncode != 0:
+                      log_error(result.stderr)
+                      return None
+                  return result.stdout.strip()
+              except Exception as e:
+                  log_error(f"Encryption failed: {str(e)}")
+                  return None
+
+          def process_dict(node, path, secrets, key, tool_path, stats):
+              for k, v in node.items():
+                  full_path = f"{path}.{k}" if path else k
+                  if isinstance(v, str):
+                      patterns = ['host','port','password','username','user','secret','key','token','credential','pwd']
+                      if any(p in k.lower() for p in patterns):
+                          env_key = full_path.upper().replace('.', '_')
+                          log_info(f"Found property: {full_path} looking for env var {env_key}")
+                          if env_key in secrets:
+                              encrypted = encrypt_with_jar(secrets[env_key], key, tool_path)
+                              if encrypted:
+                                  node[k] = f"![{encrypted}]"
+                                  stats["encrypted"] += 1
+                                  log_success(f"Encrypted: {full_path}")
+                              else:
+                                  stats["failed"].append(full_path)
+                                  log_error(f"Failed to encrypt: {full_path}")
+                          else:
+                              stats["skipped"].append(full_path)
+                              log_warn(f"Missing env var {env_key} value left unencrypted")
+                  elif isinstance(v, dict):
+                      process_dict(v, full_path, secrets, key, tool_path, stats)
+
+          def main():
+              env = os.getenv('TARGET_ENV', 'UAT').upper()
+              secure_file = f"src/main/resources/properties/config-secure-{env}.yaml"
+              if not Path(secure_file).exists():
+                  log_error(f"Secure config file missing: {secure_file}")
+                  sys.exit(1)
+              key = os.getenv('DECRYPTION_KEY')
+              tool_path = os.getenv('SECURE_TOOL_PATH')
+              if not key or not tool_path:
+                  log_error("Missing DECRYPTION_KEY or SECURE_TOOL_PATH")
+                  sys.exit(1)
+              secrets = {k: v for k, v in os.environ.items() if k.isupper()}
+              log_info(f"Loaded {len(secrets)} env variables")
+              backup = secure_file + ".backup"
+              Path(secure_file).replace(backup)
+              log_info(f"Backup created: {backup}")
+              data = yaml.safe_load(open(backup))
+              stats = {"encrypted": 0, "skipped": [], "failed": []}
+              process_dict(data, "", secrets, key, tool_path, stats)
+              yaml.dump(data, open(secure_file, "w"), sort_keys=False)
+              log_success(f"Encrypted {stats['encrypted']} properties")
+
+          if __name__ == "__main__":
+              main()
+          ENCRYPT_SCRIPT
+        env:
+          TARGET_ENV: ${{ env.TARGET_ENV }}
+          DECRYPTION_KEY: ${{ secrets.DECRYPTION_KEY }}
+          SECURE_TOOL_PATH: ${{ env.SECURE_TOOL_PATH }}
+          BOS_HOST: ${{ secrets.BOS_HOST }}
+          BOS_PORT: ${{ secrets.BOS_PORT }}
+
+      - name: Commit Encrypted Properties
+        run: |
+          echo "Committing encrypted properties before release:prepare"
+          git add src/main/resources/properties/config-secure-*.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit for encrypted properties"
+          else
+            git commit -m "chore: Update encrypted properties for UAT release"
+            echo "Encrypted properties committed successfully"
+          fi
+
+      - name: Clean Previous Release State
+        run: |
+          echo "Cleaning previous release state with release:clean"
+          mvn -B release:clean -s .maven/settings.xml || echo "No previous release to clean"
+            
+          # Also check and remove any existing tags
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          NEXT_TAG=$(echo "${CURRENT_VERSION}" | sed 's/-SNAPSHOT//')
+            
+          if git rev-parse "${NEXT_TAG}" >/dev/null 2>&1; then
+            echo "Removing existing local tag: ${NEXT_TAG}"
+            git tag -d "${NEXT_TAG}"
+          fi
+            
+          if git ls-remote --tags origin | grep -q "refs/tags/${NEXT_TAG}$"; then
+            echo "Removing existing remote tag: ${NEXT_TAG}"
+            git push origin ":refs/tags/${NEXT_TAG}"
+          fi
+
+      - name: Execute Maven Release Prepare
+        run: |
+          echo "Executing Maven Release Prepare - creating local tag and version bump"
+          echo "Working on branch: $(git rev-parse --abbrev-ref HEAD)"
+          echo "Branch commit: $(git log -1 --oneline)"
+          mvn -B release:prepare -s .maven/settings.xml -P${TARGET_ENV} -DpushChanges=false -Darguments="-DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id=${CONNECTED_APP_CLIENT_ID} -Dclient.secret=${CONNECTED_APP_CLIENT_SECRET} -Dnexus.username=${NEXUS_USERNAME} -Dnexus.password=${NEXUS_PASSWORD}" -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+          echo ""
+          echo "Release prepare completed - tag created from release branch"       
+
+      - name: Get Release Tag
+        id: set_release_tag
+        run: |
+          RELEASE_TAG=$(git describe --tags --abbrev=0)
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
+          echo "tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "Created release tag: ${RELEASE_TAG}"
+
+      - name: Determine Release Flow
+        run: |
+          IS_BUGFIX="${{ steps.detect_bugfix.outputs.is_bugfix }}"
+          echo "IS_BUGFIX=${IS_BUGFIX}" >> $GITHUB_ENV
+          
+          if [ "${IS_BUGFIX}" = "true" ]; then
+            echo "=========================================="
+            echo "BUGFIX MERGE DETECTED"
+            echo "=========================================="
+            echo "Using Maven Release Plugin for deployment"
+            echo "Flow: API Manager orchestration release:perform (with mule:deploy)"
+          else
+            echo "=========================================="
+            echo "REGULAR RELEASE"
+            echo "=========================================="
+            echo "Using manual deployment workflow"
+            echo "Flow: Manual checkout build Exchange API Manager mule:deploy"
+          fi
+
+      - name: Install Anypoint CLI
+        run: |
+          npm install -g anypoint-cli-v4
+          sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Configure Anypoint CLI
+        run: |
+          anypoint-cli-v4 conf client_id "${CONNECTED_APP_CLIENT_ID}"
+          anypoint-cli-v4 conf client_secret "${CONNECTED_APP_CLIENT_SECRET}"
+          anypoint-cli-v4 conf organization "${ORG_ID}"
+
+      - name: API Manager Orchestration (Bugfix - Before release:perform)
+        if: env.IS_BUGFIX == 'true'
+        run: |
+          echo "API Manager Orchestration for Bugfix Flow"
+          echo "This must happen BEFORE release:perform to inject API ID"
+          
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          RELEASE_VERSION=$(echo "${RELEASE_TAG}" | sed 's/^v//')
+          BASE_VERSION=$(echo "${RELEASE_VERSION}" | sed 's/-rc[0-9]*$//')
+          
+          echo "API: ${REPO_NAME} v${BASE_VERSION}"
+          
+          ENDPOINT_URI=$(mvn help:evaluate -Dexpression=api.manager.endpoint.uri -q -DforceStdout -P${TARGET_ENV})
+          DEPLOYMENT_TYPE=$(mvn help:evaluate -Dexpression=api.manager.deployment.type -q -DforceStdout -P${TARGET_ENV})
+          API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
+          API_SCHEME=$(mvn help:evaluate -Dexpression=api.manager.scheme -q -DforceStdout -P${TARGET_ENV})
+          API_PORT=$(mvn help:evaluate -Dexpression=api.manager.port -q -DforceStdout -P${TARGET_ENV})
+          
+          echo "Resolved API Config: URI=${ENDPOINT_URI}, Type=${DEPLOYMENT_TYPE}, Path=${API_PATH}, Scheme=${API_SCHEME}, Port=${API_PORT}"
+
+          API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id' || echo "")
+          
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            echo "Creating API instance..."
+            CREATE_OUTPUT=$(anypoint-cli-v4 api-mgr:api:manage "$REPO_NAME" "$BASE_VERSION" --environment "${ANYPOINT_ENV}" --deploymentType "$DEPLOYMENT_TYPE" --endpointUri "$ENDPOINT_URI" --path "$API_PATH" --scheme "$API_SCHEME" --port "$API_PORT" --muleVersion4OrAbove --output json 2>&1)
+            
+            API_INSTANCE_ID=$(echo "$CREATE_OUTPUT" | jq -r '.id // .apiInstanceId // empty' 2>/dev/null || echo "")
+            
+            if [ -z "$API_INSTANCE_ID" ]; then
+              sleep 5
+              API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id')
+            fi
+          fi
+          
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            echo "ERROR: Failed to create/retrieve API instance"
+            exit 1
+          fi
+          
+          echo "API Instance ID: ${API_INSTANCE_ID}"
+          echo "BUGFIX_API_ID=${API_INSTANCE_ID}" >> $GITHUB_ENV
+          echo "$API_INSTANCE_ID" > api_instance_id.txt
+
+      
+      - name: Execute Maven Release Perform (Bugfix Flow Only)
+        if: env.IS_BUGFIX == 'true'
+        run: |
+          echo "=== Executing release:perform for Bugfix ==="
+          echo "Using local checkout - no remote clone needed"
+          API_INSTANCE_ID="${BUGFIX_API_ID}"
+          echo "Using API Instance ID: ${API_INSTANCE_ID}"
+          
+          # Create CloudHub deploy properties file
+          cat > cloudhub-deploy.properties << EOF
+          env=${TARGET_ENV}
+          api.id=${API_INSTANCE_ID}
+          anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}
+          anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}
+          mule.key=${DECRYPTION_KEY}
+          EOF
+          
+          echo "CloudHub properties file created:"
+          cat cloudhub-deploy.properties
+          
+          # Prepare release (creates the tag and target/checkout folder)
+          mvn -B release:prepare@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -Darguments="-DskipTests"
+          
+          # Copy CloudHub deploy file into the release checkout folder
+          mkdir -p target/checkout
+          cp cloudhub-deploy.properties target/checkout/
+          
+          echo "=== Performing release with full deployment ==="
+          mvn -B release:perform@bugfix-release -s .maven/settings.xml -P${TARGET_ENV} -DlocalCheckout=true -Denv=${TARGET_ENV} -Dapi.id="${BUGFIX_API_ID}" -Dmule.key="${DECRYPTION_KEY}" -Danypoint.organization="${ORG_ID}" -Danypoint.environment="${ANYPOINT_ENV}" -Danypoint.platform.client.id="${ANYPOINT_PLATFORM_CLIENT_ID}" -Danypoint.platform.client.secret="${ANYPOINT_PLATFORM_CLIENT_SECRET}" -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+          echo "release:perform completed with full deployment"
+
+      - name: Checkout Tagged Source (Regular Release Only)
+        if: env.IS_BUGFIX != 'true'
+        run: |
+          echo "Checking out tagged source for regular release: ${{ env.RELEASE_TAG }}"
+          echo "This tag was created from the release branch: ${{ github.event.pull_request.base.ref }}"
+          git checkout ${{ env.RELEASE_TAG }}
+          echo ""
+          echo "Tag details:"
+          git show ${{ env.RELEASE_TAG }} --no-patch --format="%H %s"
+          echo ""
+          echo "Confirmed: Building from release branch tag"
+
+      - name: Build Tagged Artifact (Regular Release Only)
+        if: env.IS_BUGFIX != 'true'
+        run: |
+          echo "Manual build of artifact"
+          mvn -B clean package -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+
+      - name: Deploy to Exchange (Regular Release Only)
+        if: env.IS_BUGFIX != 'true'
+        run: |
+          echo "Manual deploy to Exchange"
+          set +e
+          mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}" 2>&1 | tee /tmp/exchange-deploy.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          
+          if [ ${EXIT_CODE} -ne 0 ]; then
+            if grep -q "An asset already exists with this version" /tmp/exchange-deploy.log; then
+              echo "WARNING: Asset already exists - skipping"
+            else
+              echo "ERROR: Exchange deployment failed"
+              cat /tmp/exchange-deploy.log
+              exit ${EXIT_CODE}
+            fi
+          else
+            echo "Successfully deployed to Exchange"
+          fi
+
+      - name: API Manager Orchestration (Regular Release Only)
+        if: env.IS_BUGFIX != 'true'
+        run: |
+          echo "=== API Manager Orchestration (Regular Release) ==="
+          
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          RELEASE_VERSION=$(echo "${{ env.RELEASE_TAG }}" | sed 's/^v//')
+          BASE_VERSION=$(echo "${RELEASE_VERSION}" | sed 's/-rc[0-9]*$//')
+          
+          ENDPOINT_URI=$(mvn help:evaluate -Dexpression=api.manager.endpoint.uri -q -DforceStdout -P${TARGET_ENV})
+          DEPLOYMENT_TYPE=$(mvn help:evaluate -Dexpression=api.manager.deployment.type -q -DforceStdout -P${TARGET_ENV})
+          API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
+          API_SCHEME=$(mvn help:evaluate -Dexpression=api.manager.scheme -q -DforceStdout -P${TARGET_ENV})
+          API_PORT=$(mvn help:evaluate -Dexpression=api.manager.port -q -DforceStdout -P${TARGET_ENV})
+          echo "API Configuration: Endpoint=${ENDPOINT_URI}, Type=${DEPLOYMENT_TYPE}, Path=${API_PATH}, Scheme=${API_SCHEME}, Port=${API_PORT}"
+          API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id' || echo "")
+          
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            CREATE_OUTPUT=$(anypoint-cli-v4 api-mgr:api:manage "$REPO_NAME" "$BASE_VERSION" --environment "${ANYPOINT_ENV}" --deploymentType "$DEPLOYMENT_TYPE" --endpointUri "$ENDPOINT_URI" --path "$API_PATH" --scheme "$API_SCHEME" --port "$API_PORT" --muleVersion4OrAbove --output json 2>&1)
+            
+            API_INSTANCE_ID=$(echo "$CREATE_OUTPUT" | jq -r '.id // .apiInstanceId // empty' 2>/dev/null || echo "")
+            
+            if [ -z "$API_INSTANCE_ID" ]; then
+              sleep 5
+              API_INSTANCE_ID=$(anypoint-cli-v4 api-mgr:api:list --environment "${ANYPOINT_ENV}" --output json | jq -r --arg asset "$REPO_NAME" --arg ver "$BASE_VERSION" '.[] | select(.assetId==$asset and .assetVersion==$ver) | .id')
+            fi
+          fi
+          
+          if [ -z "$API_INSTANCE_ID" ] || [ "$API_INSTANCE_ID" = "null" ]; then
+            echo "ERROR: Failed to get API instance"
+            exit 1
+          fi
+          
+          echo "API Instance: ${API_INSTANCE_ID}"
+          echo "API_INSTANCE_ID=$API_INSTANCE_ID" >> $GITHUB_ENV
+          echo "$API_INSTANCE_ID" > api_instance_id.txt
+
+      - name: Deploy to CloudHub 2.0 (Regular Release Only)
+        if: env.IS_BUGFIX != 'true'
+        run: |
+          echo "=== CloudHub 2.0 Deployment (Regular Release) ==="
+          
+          API_INSTANCE_ID=$(cat api_instance_id.txt)
+          
+          echo "env=${TARGET_ENV}" > cloudhub-properties.txt
+          echo "api.id=${API_INSTANCE_ID}" >> cloudhub-properties.txt
+          echo "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" >> cloudhub-properties.txt
+          echo "anypoint.platform.client_secret=${ANYPOINT_PLATFORM_CLIENT_SECRET}" >> cloudhub-properties.txt
+          
+          mvn -B mule:deploy -s .maven/settings.xml -P${TARGET_ENV} -DmuleDeploy -DskipMunitTests -Danypoint.organization=${ORG_ID} -Danypoint.environment="${ANYPOINT_ENV}" -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Danypoint.platform.client.id="${ANYPOINT_PLATFORM_CLIENT_ID}" -Danypoint.platform.client.secret="${ANYPOINT_PLATFORM_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dapi.id="${API_INSTANCE_ID}" -Dcloudhub2.applicationPropertiesFile=cloudhub-properties.txt
+          
+          echo "CloudHub deployment completed"
+
+      - name: Push Release Changes to Remote
+        run: |
+          echo "Pushing release changes to remote"
+          CURRENT_BRANCH="${{ github.ref_name }}"
+          echo "Current branch: ${CURRENT_BRANCH}"
+          git push origin HEAD:${CURRENT_BRANCH}
+          git push origin --tags
+          echo "Tag ${{ env.RELEASE_TAG }} pushed"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mule-artifact-uat-${{ env.RELEASE_TAG }}
+          path: target/*.jar
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Deployment Summary
+        run: |
+          echo "=========================================="
+          echo "UAT DEPLOYMENT COMPLETED"
+          echo "=========================================="
+          echo "Release: ${{ env.RELEASE_TAG }}"
+          echo "Environment: UAT"
+          echo ""
+          if [ "${{ env.IS_BUGFIX }}" = "true" ]; then
+            echo "BUGFIX FLOW:"
+            echo "Deployed from branch: ${{ github.event.pull_request.base.ref }}"
+          echo ""
+          if [ "${{ env.IS_BUGFIX }}" = "true" ]; then
+            echo "BUGFIX FLOW:"
+            echo "  Source: ${{ github.event.pull_request.head.ref }}"
+            echo "  Target: ${{ github.event.pull_request.base.ref }}"
+            echo "  Steps:"
+            echo "    - release:prepare on release branch"
+            echo "    - API Manager orchestration (pre-deployment)"
+            echo "    - release:perform@bugfix-release (checkout + build + Exchange + mule:deploy)"
+            echo "  API ID: ${BUGFIX_API_ID}"
+            echo "  Backport will be triggered"
+          else
+            echo "REGULAR RELEASE FLOW:"
+            echo "  Source: ${{ github.event.pull_request.head.ref }}"
+            echo "  Target: ${{ github.event.pull_request.base.ref }}"
+            echo "  Steps:"
+            echo "    - release:prepare on release branch"
+            echo "    - Manual checkout of tag from release branch"
+            echo "    - Manual build + Exchange"
+            echo "    - API Manager orchestration"
+            echo "    - Manual mule:deploy"
+            echo "  API ID: $(cat api_instance_id.txt)"
+          fi
+          echo ""
+          echo "Note: All operations performed on merged release branch code"
+
+            echo "  release:prepare"
+            echo "  API Manager orchestration (pre-deployment)"
+            echo "  release:perform@bugfix-release (checkout + build + Exchange + mule:deploy)"
+            echo "  API ID: ${BUGFIX_API_ID}"
+            echo "  Backport will be triggered"
+          else
+            echo "REGULAR RELEASE FLOW:"
+            echo "  release:prepare"
+            echo "  Manual checkout + build + Exchange"
+            echo "  API Manager orchestration"
+            echo "  Manual mule:deploy"
+            echo "  API ID: $(cat api_instance_id.txt)"
+          fi
