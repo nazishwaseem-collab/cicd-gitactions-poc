@@ -66,6 +66,25 @@ jobs:
           echo "CURRENT_VERSION=${CURRENT_VERSION}" >> $GITHUB_ENV
           echo "Current SNAPSHOT version for bugfix: ${CURRENT_VERSION}"
 
+      - name: Create Unique SNAPSHOT Version for Iterative Deployment
+        run: |
+          ORIGINAL_VERSION="${{ env.CURRENT_VERSION }}"
+          TIMESTAMP=$(date +%Y%m%d%H%M%S)
+          # Extract base version without -SNAPSHOT
+          BASE_VERSION=$(echo "${ORIGINAL_VERSION}" | sed 's/-SNAPSHOT//')
+          # Create unique SNAPSHOT version with timestamp
+          UNIQUE_VERSION="${BASE_VERSION}-${TIMESTAMP}-SNAPSHOT"
+          echo "Original version: ${ORIGINAL_VERSION}"
+          echo "Unique version for this deployment: ${UNIQUE_VERSION}"
+          # Update POM with unique version
+          mvn versions:set -DnewVersion=${UNIQUE_VERSION} -DgenerateBackupPoms=false
+          # Verify the change
+          NEW_POM_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "Updated POM version: ${NEW_POM_VERSION}"
+          # Update environment variable
+          echo "CURRENT_VERSION=${UNIQUE_VERSION}" >> $GITHUB_ENV
+          echo "ORIGINAL_VERSION=${ORIGINAL_VERSION}" >> $GITHUB_ENV
+
       - name: Setup Python for Generic Property Encryption
         uses: actions/setup-python@v4
         with:
@@ -200,24 +219,10 @@ jobs:
 
       - name: Upload SNAPSHOT to Exchange
         run: |
-          echo "Uploading SNAPSHOT artifact to Exchange for CloudHub 2.0 deployment"
-          set +e
-          mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}" 2>&1 | tee /tmp/exchange-upload.log
-          EXIT_CODE=${PIPESTATUS[0]}
-          set -e
-          if [ ${EXIT_CODE} -ne 0 ]; then
-            if grep -q "An asset already exists with this version" /tmp/exchange-upload.log; then
-              echo "WARNING: SNAPSHOT version already exists in Exchange"
-              echo "This is expected for iterative bugfix deployments"
-              echo "Proceeding with deployment using existing Exchange artifact"
-            else
-              echo "ERROR: Exchange upload failed"
-              cat /tmp/exchange-upload.log
-              exit ${EXIT_CODE}
-            fi
-          else
-            echo "Successfully uploaded SNAPSHOT to Exchange"
-          fi
+          echo "Uploading unique SNAPSHOT artifact to Exchange for CloudHub 2.0 deployment"
+          echo "Version: ${{ env.CURRENT_VERSION }}"
+          mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+          echo "Successfully uploaded SNAPSHOT to Exchange"
 
       - name: Install Anypoint CLI
         run: |
@@ -233,7 +238,7 @@ jobs:
       - name: Manage API Instance (UAT)
         run: |
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          BASE_VERSION=$(echo "${{ env.CURRENT_VERSION }}" | sed 's/-SNAPSHOT//' | sed 's/-rc[0-9]*$//')
+          BASE_VERSION=$(echo "${{ env.ORIGINAL_VERSION }}" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
           ENDPOINT_URI=$(mvn help:evaluate -Dexpression=api.manager.endpoint.uri -q -DforceStdout -P${TARGET_ENV})
           DEPLOYMENT_TYPE=$(mvn help:evaluate -Dexpression=api.manager.deployment.type -q -DforceStdout -P${TARGET_ENV})
           API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
@@ -275,17 +280,20 @@ jobs:
 
       - name: Deployment Summary
         run: |
-          echo "UAT Bugfix SNAPSHOT Deployment Completed"
-          echo "Version: ${{ env.CURRENT_VERSION }}"
+          echo "=========================================="
+          echo "UAT BUGFIX SNAPSHOT DEPLOYMENT COMPLETED"
+          echo "=========================================="
+          echo "Original Version: ${{ env.ORIGINAL_VERSION }}"
+          echo "Deployed Version: ${{ env.CURRENT_VERSION }}"
           echo "Environment: ${ANYPOINT_ENV}"
           echo "Branch: ${{ github.ref_name }}"
           echo "API Instance ID: $(cat api_instance_id.txt)"
           echo ""
-          echo "NOTE: Iterative bugfix deployment"
-          echo "- No formal versioning or tagging "
-          echo "- SNAPSHOT uploaded to Exchange"
-          echo "- Deployed to CloudHub 2.0 from Exchange"
-
+          echo "NOTE: Iterative bugfix deployment with unique timestamp"
+          echo "- Timestamp-based SNAPSHOT for iterative testing"
+          echo "- Each push creates new deployable artifact"
+          echo "- Uploaded to Exchange and deployed to CloudHub 2.0"
+          echo "=========================================="
           
   backport_to_develop:
     name: Backport Bug Fixes to Develop Branch
