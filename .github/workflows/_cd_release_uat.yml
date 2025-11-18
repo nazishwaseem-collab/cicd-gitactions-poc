@@ -65,25 +65,7 @@ jobs:
           CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
           echo "CURRENT_VERSION=${CURRENT_VERSION}" >> $GITHUB_ENV
           echo "Current SNAPSHOT version for bugfix: ${CURRENT_VERSION}"
-
-      - name: Create Unique SNAPSHOT Version for Iterative Deployment
-        run: |
-          ORIGINAL_VERSION="${{ env.CURRENT_VERSION }}"
-          TIMESTAMP=$(date +%Y%m%d%H%M%S)
-          # Extract base version without -SNAPSHOT
-          BASE_VERSION=$(echo "${ORIGINAL_VERSION}" | sed 's/-SNAPSHOT//')
-          # Create unique SNAPSHOT version with timestamp
-          UNIQUE_VERSION="${BASE_VERSION}-${TIMESTAMP}-SNAPSHOT"
-          echo "Original version: ${ORIGINAL_VERSION}"
-          echo "Unique version for this deployment: ${UNIQUE_VERSION}"
-          # Update POM with unique version
-          mvn versions:set -DnewVersion=${UNIQUE_VERSION} -DgenerateBackupPoms=false
-          # Verify the change
-          NEW_POM_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          echo "Updated POM version: ${NEW_POM_VERSION}"
-          # Update environment variable
-          echo "CURRENT_VERSION=${UNIQUE_VERSION}" >> $GITHUB_ENV
-          echo "ORIGINAL_VERSION=${ORIGINAL_VERSION}" >> $GITHUB_ENV
+          echo "This SNAPSHOT will override any existing artifact in Exchange"
 
       - name: Setup Python for Generic Property Encryption
         uses: actions/setup-python@v4
@@ -219,8 +201,9 @@ jobs:
 
       - name: Upload SNAPSHOT to Exchange
         run: |
-          echo "Uploading unique SNAPSHOT artifact to Exchange for CloudHub 2.0 deployment"
+          echo "Uploading SNAPSHOT artifact to Exchange for CloudHub 2.0 deployment"
           echo "Version: ${{ env.CURRENT_VERSION }}"
+          echo "NOTE: This will override any existing SNAPSHOT artifact with the same version"
           mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
           echo "Successfully uploaded SNAPSHOT to Exchange"
 
@@ -238,7 +221,7 @@ jobs:
       - name: Manage API Instance (UAT)
         run: |
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
-          BASE_VERSION=$(echo "${{ env.ORIGINAL_VERSION }}" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
+          BASE_VERSION=$(echo "${{ env.CURRENT_VERSION }}" | sed 's/-SNAPSHOT$//' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
           ENDPOINT_URI=$(mvn help:evaluate -Dexpression=api.manager.endpoint.uri -q -DforceStdout -P${TARGET_ENV})
           DEPLOYMENT_TYPE=$(mvn help:evaluate -Dexpression=api.manager.deployment.type -q -DforceStdout -P${TARGET_ENV})
           API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
@@ -271,7 +254,7 @@ jobs:
           API_INSTANCE_ID=$(cat api_instance_id.txt)
           echo "Deploying bugfix SNAPSHOT to UAT with API ID ${API_INSTANCE_ID}"
           echo "Version: ${{ env.CURRENT_VERSION }}"
-          echo "This is an iterative bugfix deployment from Exchange"
+          echo "This is an iterative bugfix deployment - SNAPSHOT overrides previous deployment"
           echo "env=${TARGET_ENV}" > cloudhub-properties.txt
           echo "api.id=${API_INSTANCE_ID}" >> cloudhub-properties.txt
           echo "anypoint.platform.client_id=${ANYPOINT_PLATFORM_CLIENT_ID}" >> cloudhub-properties.txt
@@ -283,16 +266,16 @@ jobs:
           echo "=========================================="
           echo "UAT BUGFIX SNAPSHOT DEPLOYMENT COMPLETED"
           echo "=========================================="
-          echo "Original Version: ${{ env.ORIGINAL_VERSION }}"
           echo "Deployed Version: ${{ env.CURRENT_VERSION }}"
           echo "Environment: ${ANYPOINT_ENV}"
           echo "Branch: ${{ github.ref_name }}"
           echo "API Instance ID: $(cat api_instance_id.txt)"
           echo ""
-          echo "NOTE: Iterative bugfix deployment with unique timestamp"
-          echo "- Timestamp-based SNAPSHOT for iterative testing"
-          echo "- Each push creates new deployable artifact"
-          echo "- Uploaded to Exchange and deployed to CloudHub 2.0"
+          echo "NOTE: Iterative bugfix deployment"
+          echo "- Same SNAPSHOT version used for all deployments"
+          echo "- Each push overrides previous SNAPSHOT in Exchange"
+          echo "- Deployed to CloudHub 2.0"
+          echo "- No version increment needed for bug fix testing"
           echo "=========================================="
           
   backport_to_develop:
