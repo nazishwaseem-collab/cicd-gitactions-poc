@@ -291,5 +291,5 @@
 		<developerConnection>scm:git:https://github.com/nazishwaseem-collab/cicd-gitactions-poc.git</developerConnection>
 		<url>https://github.com/nazishwaseem-collab/cicd-gitactions-poc</url>
 		<tag>1.0.0-rc4</tag>
-	</scm>
+	</scm>  
 </project> 
