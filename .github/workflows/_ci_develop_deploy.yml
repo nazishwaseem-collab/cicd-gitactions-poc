@@ -53,15 +53,12 @@ jobs:
           echo "NEXUS_USERNAME=${{ secrets.NEXUS_USERNAME }}" >> $GITHUB_ENV
           echo "NEXUS_PASSWORD=${{ secrets.NEXUS_PASSWORD }}" >> $GITHUB_ENV
 
-      # Set unique SNAPSHOT version for development
-      - name: Set CI version (SNAPSHOT with build number)
+      - name: Get Current Version
         run: |
-          BASE_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          BASE_VERSION=$(echo "$BASE_VERSION" | sed 's/-SNAPSHOT//' | sed 's/-[0-9]*$//')
-          NEW_VERSION="${BASE_VERSION}-${GITHUB_RUN_NUMBER}-SNAPSHOT"
-          mvn -B versions:set -DnewVersion="${NEW_VERSION}" -DgenerateBackupPoms=false -DprocessDependencies=false
-          echo "NEW_VERSION=${NEW_VERSION}" >> $GITHUB_ENV
-          echo "Using version: ${NEW_VERSION}"
+          CURRENT_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "CURRENT_VERSION=${CURRENT_VERSION}" >> $GITHUB_ENV
+          echo "Current SNAPSHOT version for development: ${CURRENT_VERSION}"
+          echo "This SNAPSHOT will override any existing artifact in Exchange"
 
       # Install Python and dependencies for generic encryption
       - name: Setup Python for Generic Property Encryption
@@ -399,8 +396,10 @@ jobs:
       - name: Upload to Exchange
         run: |
           echo "Publishing SNAPSHOT version to Exchange..."
-          echo "mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}""
+          echo "Version: ${{ env.CURRENT_VERSION }}"
+          echo "NOTE: This will override any existing SNAPSHOT artifact with the same version"
           mvn -B deploy -s .maven/settings.xml -P${TARGET_ENV} -DskipMunitTests -Danypoint.organization=${ORG_ID} -Dclient.id="${CONNECTED_APP_CLIENT_ID}" -Dclient.secret="${CONNECTED_APP_CLIENT_SECRET}" -Ddecryption.key="${DECRYPTION_KEY}" -Dnexus.username="${NEXUS_USERNAME}" -Dnexus.password="${NEXUS_PASSWORD}"
+          echo "Successfully uploaded SNAPSHOT to Exchange"
 
       # API Management
       - name: Install Anypoint CLI
@@ -418,7 +417,7 @@ jobs:
         run: |
           REPO_NAME="${GITHUB_REPOSITORY##*/}"
           ARTIFACT_ID=$(mvn help:evaluate -Dexpression=project.artifactId -q -DforceStdout -P${TARGET_ENV})
-          BASE_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout -P${TARGET_ENV} | sed 's/-SNAPSHOT//' | sed 's/-[0-9]*$//')
+          BASE_VERSION=$(echo "${{ env.CURRENT_VERSION }}" | sed 's/-SNAPSHOT$//' | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
           ENDPOINT_URI=$(mvn help:evaluate -Dexpression=api.manager.endpoint.uri -q -DforceStdout -P${TARGET_ENV})
           DEPLOYMENT_TYPE=$(mvn help:evaluate -Dexpression=api.manager.deployment.type -q -DforceStdout -P${TARGET_ENV})
           API_PATH=$(mvn help:evaluate -Dexpression=api.manager.path -q -DforceStdout -P${TARGET_ENV})
@@ -458,6 +457,8 @@ jobs:
         run: |
           API_INSTANCE_ID=$(cat api_instance_id.txt)
           echo "Deploying to ${ANYPOINT_ENV} with API ID ${API_INSTANCE_ID}"
+          echo "Version: ${{ env.CURRENT_VERSION }}"
+          echo "This is a development SNAPSHOT deployment - overrides previous deployment"
           echo "All deployment properties come from settings.xml profile: ${TARGET_ENV}"
           # Create properties file
           echo "env=${ANYPOINT_ENV}" > cloudhub-properties.txt
@@ -472,7 +473,16 @@ jobs:
       - name: Deployment Summary
         if: success()
         run: |
-          echo "Development deployment completed successfully!"
-          echo "Version: ${{ env.NEW_VERSION }}"
+          echo "=========================================="
+          echo "DEVELOPMENT DEPLOYMENT COMPLETED"
+          echo "=========================================="
+          echo "Version: ${{ env.CURRENT_VERSION }}"
           echo "Environment: ${ANYPOINT_ENV}"
-          echo "Secure properties were encrypted and packaged in the JAR"
+          echo "Branch: ${{ github.ref_name }}"
+          echo ""
+          echo "NOTE: Development SNAPSHOT deployment"
+          echo "- Same SNAPSHOT version used for all deployments"
+          echo "- Each push overrides previous SNAPSHOT in Exchange"
+          echo "- Deployed to CloudHub 2.0"
+          echo "- Secure properties were encrypted and packaged"
+          echo "=========================================="
