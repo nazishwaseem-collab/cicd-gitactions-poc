@@ -924,6 +924,7 @@ jobs:
           git log --oneline -3
           
           git push origin HEAD:${CURRENT_BRANCH}
+          git push origin --tags
           echo "Pushed both release:prepare commits to ${CURRENT_BRANCH}"
 
       # ============================================================
@@ -1031,6 +1032,7 @@ jobs:
           echo "CloudHub deployment completed"
 
       - name: Push Release Changes to Remote
+        if: env.IS_BUGFIX == 'true'
         run: |
           echo "=========================================="
           echo "Pushing Release Changes"
