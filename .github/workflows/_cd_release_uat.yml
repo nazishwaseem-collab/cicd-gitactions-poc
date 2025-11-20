@@ -356,21 +356,17 @@ jobs:
           #### 2. Choose Backport Strategy
           
           **Option A: Cherry-Pick (Recommended for targeted fixes)**
-```bash
           git checkout develop
           git cherry-pick <commit-hash>
           git push origin develop
-```
           - Use this when you want to backport specific commits only
           - Provides more control over what gets merged
           - Better for complex release branches with multiple unrelated changes
           
           **Option B: Merge Release Branch**
-```bash
           git checkout develop
           git merge ${{ env.RELEASE_BRANCH }}
           git push origin develop
-```
           - Use this when branches are closely aligned
           - Simpler when all changes in release should go to develop
           - Appropriate when release only contains the bug fixes
