@@ -333,6 +333,8 @@ jobs:
 
       - name: Create Backport Pull Request
         run: |
+          echo "Creating backport pull request..."
+          
           gh pr create --title "[Backport] Bug fixes from ${{ env.RELEASE_BRANCH }} to develop" --body "$(cat <<'EOF'
           ## Automated Backport - Bug Fixes
           
@@ -354,21 +356,21 @@ jobs:
           #### 2. Choose Backport Strategy
           
           **Option A: Cherry-Pick (Recommended for targeted fixes)**
-
+```bash
           git checkout develop
           git cherry-pick <commit-hash>
           git push origin develop
-
+```
           - Use this when you want to backport specific commits only
           - Provides more control over what gets merged
           - Better for complex release branches with multiple unrelated changes
           
           **Option B: Merge Release Branch**
-
+```bash
           git checkout develop
           git merge ${{ env.RELEASE_BRANCH }}
           git push origin develop
-
+```
           - Use this when branches are closely aligned
           - Simpler when all changes in release should go to develop
           - Appropriate when release only contains the bug fixes
@@ -395,77 +397,57 @@ jobs:
           - **Run Number:** ${{ github.run_number }}
           - **Triggered by:** ${{ github.actor }}
           EOF
-          )" --base develop --head ${{ env.BACKPORT_BRANCH }} --label backport,bugfix,automated,requires-review,release-manager --assignee nazishwaseem-collab
+          )" --base develop --head ${{ env.BACKPORT_BRANCH }}
+          
+          echo "Pull request created successfully"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Get PR Number
-        id: get_pr
+      - name: Add Labels to PR
         run: |
           sleep 2
           PR_NUMBER=$(gh pr list --head ${{ env.BACKPORT_BRANCH }} --json number --jq '.[0].number')
           echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_ENV
-          echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
-          echo "Created PR number: ${PR_NUMBER}"
+          
+          echo "Adding labels to PR #${PR_NUMBER}..."
+          
+          LABELS=("backport" "bugfix" "automated" "requires-review")
+          
+          for label in "${LABELS[@]}"; do
+            if gh label list | grep -q "^${label}"; then
+              echo "Label '${label}' exists, adding to PR..."
+              gh pr edit ${PR_NUMBER} --add-label "${label}" || echo "Could not add label '${label}'"
+            else
+              echo "Label '${label}' does not exist, creating it..."
+              case ${label} in
+                "backport")
+                  gh label create "${label}" --description "Backport changes to another branch" --color "0E8A16" || true
+                  ;;
+                "bugfix")
+                  gh label create "${label}" --description "Bug fix" --color "D73A4A" || true
+                  ;;
+                "automated")
+                  gh label create "${label}" --description "Automated by CI/CD" --color "FBCA04" || true
+                  ;;
+                "requires-review")
+                  gh label create "${label}" --description "Requires manual review" --color "B60205" || true
+                  ;;
+              esac
+              gh pr edit ${PR_NUMBER} --add-label "${label}" || echo "Could not add label '${label}'"
+            fi
+          done
+          
+          echo "Labels added successfully"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Send Email Notification to Release Manager
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 587
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "[Action Required] Backport PR Created - ${{ env.RELEASE_BRANCH }} to develop"
-          to: nazish.waseem@cloudwerx.co
-          from: GitHub Actions <noreply@github.com>
-          body: |
-            Hello Release Manager,
-            
-            A backport Pull Request has been automatically created for bug fixes that were merged to the release branch.
-            
-            PR Details:
-            - PR Number: #${{ env.PR_NUMBER }}
-            - Source Branch: ${{ env.RELEASE_BRANCH }}
-            - Target Branch: develop
-            - Release Tag: ${{ env.RELEASE_TAG }}
-            - Repository: ${{ github.repository }}
-            
-            Action Required:
-            1. Review the Pull Request at: ${{ github.server_url }}/${{ github.repository }}/pull/${{ env.PR_NUMBER }}
-            2. Choose appropriate backport strategy (cherry-pick or merge)
-            3. Resolve any conflicts if present
-            4. Approve and merge to develop branch
-            
-            This ensures bug fixes are included in future releases and prevents regression.
-            
-            Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            
-            Best regards,
-            CI/CD Automation
-
-      - name: Backport Initiation Summary
+      - name: Assign PR to Release Manager
         run: |
-          echo "=========================================="
-          echo "BACKPORT PR CREATED SUCCESSFULLY"
-          echo "=========================================="
-          echo "Release Branch: ${{ env.RELEASE_BRANCH }}"
-          echo "Release Tag: ${{ env.RELEASE_TAG }}"
-          echo "Target: develop branch"
-          echo "PR Number: #${{ env.PR_NUMBER }}"
-          echo "Backport Branch: ${{ env.BACKPORT_BRANCH }}"
-          echo ""
-          echo "NEXT STEPS:"
-          echo "1. Release Manager (nazish.waseem@cloudwerx.co) has been notified via email"
-          echo "2. Manual review and approval required"
-          echo "3. Choose appropriate backport strategy (cherry-pick or merge)"
-          echo "4. Resolve any conflicts"
-          echo "5. Approve and merge to develop"
-          echo ""
-          echo "This ensures bug fixes are included in future releases"
-          echo "=========================================="
-          echo ""
+          PR_NUMBER="${{ env.PR_NUMBER }}"
+          echo "Assigning PR #${PR_NUMBER} to nazishwaseem-collab..."
+          gh pr edit ${PR_NUMBER} --add-assignee nazishwaseem-collab || echo "Could not assign PR (user may not have access)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           echo "View PR at: ${{ github.server_url }}/${{ github.repository }}/pull/${{ env.PR_NUMBER }}"
 
   formal_release_candidate_uat:
