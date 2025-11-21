@@ -321,131 +321,152 @@ jobs:
           fi
           echo "develop branch exists"
 
-      - name: Create Backport Branch
-        run: |
-          BACKPORT_BRANCH="backport/${{ env.RELEASE_BRANCH }}-to-develop-${{ github.run_number }}"
-          echo "BACKPORT_BRANCH=${BACKPORT_BRANCH}" >> $GITHUB_ENV
-          
-          echo "Creating backport branch: ${BACKPORT_BRANCH}"
-          git checkout -b ${BACKPORT_BRANCH} origin/${{ env.RELEASE_BRANCH }}
-          git push origin ${BACKPORT_BRANCH}
-          echo "Backport branch created and pushed"
-
       - name: Create Backport Pull Request
-        run: |
-          echo "Creating backport pull request..."
-          
-          gh pr create --title "[Backport] Bug fixes from ${{ env.RELEASE_BRANCH }} to develop" --body "$(cat <<'EOF'
-          ## Automated Backport - Bug Fixes
-          
-          This PR backports bug fixes from the release branch to develop to prevent regression in future releases.
-          
-          ### Details
-          - **Release Branch:** ${{ env.RELEASE_BRANCH }}
-          - **Release Tag:** ${{ env.RELEASE_TAG }}
-          - **Target Branch:** develop
-          - **Trigger:** Bugfix merge detected in release branch
-          - **Automated by:** GitHub Actions CI/CD Pipeline
-          
-          ### Action Required by Release Manager
-          
-          #### 1. Review the Changes
-          - Verify that only bug fixes are included
-          - Check for any conflicts with ongoing development in develop
-          
-          #### 2. Choose Backport Strategy
-          
-          **Option A: Cherry-Pick (Recommended for targeted fixes)**
-          git checkout develop
-          git cherry-pick <commit-hash>
-          git push origin develop
-          - Use this when you want to backport specific commits only
-          - Provides more control over what gets merged
-          - Better for complex release branches with multiple unrelated changes
-          
-          **Option B: Merge Release Branch**
-          git checkout develop
-          git merge ${{ env.RELEASE_BRANCH }}
-          git push origin develop
-          - Use this when branches are closely aligned
-          - Simpler when all changes in release should go to develop
-          - Appropriate when release only contains the bug fixes
-          
-          #### 3. Resolve Conflicts (if any)
-          - Manually resolve any merge conflicts
-          - Test the resolution locally
-          - Ensure MUnit tests pass
-          
-          #### 4. Approve and Merge
-          - After validation, approve this PR
-          - Merge to develop branch
-          
-          ### Why This Matters
-          
-          Backporting bug fixes to develop ensures:
-          - Future releases include the fix
-          - Developers working on develop have the latest corrections
-          - Same bugs do not reappear in next release cycle
-          - Code consistency across branches
-          
-          ### Workflow Information
-          - **Workflow:** Release & UAT Deployment
-          - **Run Number:** ${{ github.run_number }}
-          - **Triggered by:** ${{ github.actor }}
-          EOF
-          )" --base develop --head ${{ env.BACKPORT_BRANCH }}
-          
-          echo "Pull request created successfully"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: peter-evans/create-pull-request@v5
+        id: create_pr
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: Backport bug fixes from ${{ env.RELEASE_BRANCH }} to develop"
+          branch: backport/${{ env.RELEASE_BRANCH }}-to-develop-${{ github.run_number }}
+          base: develop
+          title: "[Backport] Bug fixes from ${{ env.RELEASE_BRANCH }} to develop"
+          body: |
+            ## Automated Backport - Bug Fixes
+            
+            This PR backports bug fixes from the release branch to develop to prevent regression in future releases.
+            
+            ### Details
+            - **Release Branch:** ${{ env.RELEASE_BRANCH }}
+            - **Release Tag:** ${{ env.RELEASE_TAG }}
+            - **Target Branch:** develop
+            - **Trigger:** Bugfix merge detected in release branch
+            - **Automated by:** GitHub Actions CI/CD Pipeline
+            
+            ### Action Required by Release Manager
+            
+            #### 1. Review the Changes
+            - Verify that only bug fixes are included
+            - Check for any conflicts with ongoing development in develop
+            
+            #### 2. Choose Backport Strategy
+            
+            **Option A: Cherry-Pick (Recommended for targeted fixes)**
+```bash
+            git checkout develop
+            git cherry-pick <commit-hash>
+            git push origin develop
+```
+            - Use this when you want to backport specific commits only
+            - Provides more control over what gets merged
+            - Better for complex release branches with multiple unrelated changes
+            
+            **Option B: Merge Release Branch**
+```bash
+            git checkout develop
+            git merge ${{ env.RELEASE_BRANCH }}
+            git push origin develop
+```
+            - Use this when branches are closely aligned
+            - Simpler when all changes in release should go to develop
+            - Appropriate when release only contains the bug fixes
+            
+            #### 3. Resolve Conflicts (if any)
+            - Manually resolve any merge conflicts
+            - Test the resolution locally
+            - Ensure MUnit tests pass
+            
+            #### 4. Approve and Merge
+            - After validation, approve this PR
+            - Merge to develop branch
+            
+            ### Why This Matters
+            
+            Backporting bug fixes to develop ensures:
+            - Future releases include the fix
+            - Developers working on develop have the latest corrections
+            - Same bugs do not reappear in next release cycle
+            - Code consistency across branches
+            
+            ### Workflow Information
+            - **Workflow:** Release & UAT Deployment
+            - **Run Number:** ${{ github.run_number }}
+            - **Triggered by:** ${{ github.actor }}
+          labels: |
+            backport
+            bugfix
+            automated
+            requires-review
+          assignees: nazishwaseem-collab
+          delete-branch: true
 
-      - name: Add Labels to PR
+      - name: Set PR Number
+        if: steps.create_pr.outputs.pull-request-number != ''
         run: |
-          sleep 2
-          PR_NUMBER=$(gh pr list --head ${{ env.BACKPORT_BRANCH }} --json number --jq '.[0].number')
-          echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_ENV
-          
-          echo "Adding labels to PR #${PR_NUMBER}..."
-          
-          LABELS=("backport" "bugfix" "automated" "requires-review")
-          
-          for label in "${LABELS[@]}"; do
-            if gh label list | grep -q "^${label}"; then
-              echo "Label '${label}' exists, adding to PR..."
-              gh pr edit ${PR_NUMBER} --add-label "${label}" || echo "Could not add label '${label}'"
-            else
-              echo "Label '${label}' does not exist, creating it..."
-              case ${label} in
-                "backport")
-                  gh label create "${label}" --description "Backport changes to another branch" --color "0E8A16" || true
-                  ;;
-                "bugfix")
-                  gh label create "${label}" --description "Bug fix" --color "D73A4A" || true
-                  ;;
-                "automated")
-                  gh label create "${label}" --description "Automated by CI/CD" --color "FBCA04" || true
-                  ;;
-                "requires-review")
-                  gh label create "${label}" --description "Requires manual review" --color "B60205" || true
-                  ;;
-              esac
-              gh pr edit ${PR_NUMBER} --add-label "${label}" || echo "Could not add label '${label}'"
-            fi
-          done
-          
-          echo "Labels added successfully"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "PR_NUMBER=${{ steps.create_pr.outputs.pull-request-number }}" >> $GITHUB_ENV
+          echo "PR_URL=${{ steps.create_pr.outputs.pull-request-url }}" >> $GITHUB_ENV
+          echo "Created PR: #${{ steps.create_pr.outputs.pull-request-number }}"
+          echo "PR URL: ${{ steps.create_pr.outputs.pull-request-url }}"
 
-      - name: Assign PR to Release Manager
+      - name: Send Email Notification to Release Manager
+        if: steps.create_pr.outputs.pull-request-number != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "[Action Required] Backport PR Created - ${{ env.RELEASE_BRANCH }} to develop"
+          to: nazish.waseem@cloudwerx.co
+          from: GitHub Actions <noreply@github.com>
+          body: |
+            Hello Release Manager,
+            
+            A backport Pull Request has been automatically created for bug fixes that were merged to the release branch.
+            
+            PR Details:
+            - PR Number: #${{ env.PR_NUMBER }}
+            - Source Branch: ${{ env.RELEASE_BRANCH }}
+            - Target Branch: develop
+            - Release Tag: ${{ env.RELEASE_TAG }}
+            - Repository: ${{ github.repository }}
+            
+            Action Required:
+            1. Review the Pull Request at: ${{ env.PR_URL }}
+            2. Choose appropriate backport strategy (cherry-pick or merge)
+            3. Resolve any conflicts if present
+            4. Approve and merge to develop branch
+            
+            This ensures bug fixes are included in future releases and prevents regression.
+            
+            Workflow Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            
+            Best regards,
+            CI/CD Automation
+
+      - name: Backport Initiation Summary
         run: |
-          PR_NUMBER="${{ env.PR_NUMBER }}"
-          echo "Assigning PR #${PR_NUMBER} to nazishwaseem-collab..."
-          gh pr edit ${PR_NUMBER} --add-assignee nazishwaseem-collab || echo "Could not assign PR (user may not have access)"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          echo "View PR at: ${{ github.server_url }}/${{ github.repository }}/pull/${{ env.PR_NUMBER }}"
-
+          echo "=========================================="
+          echo "BACKPORT PR CREATED SUCCESSFULLY"
+          echo "=========================================="
+          echo "Release Branch: ${{ env.RELEASE_BRANCH }}"
+          echo "Release Tag: ${{ env.RELEASE_TAG }}"
+          echo "Target: develop branch"
+          if [ -n "${{ env.PR_NUMBER }}" ]; then
+            echo "PR Number: #${{ env.PR_NUMBER }}"
+            echo "PR URL: ${{ env.PR_URL }}"
+          else
+            echo "Note: No new changes detected or PR already exists"
+          fi
+          echo ""
+          echo "NEXT STEPS:"
+          echo "1. Release Manager (nazish.waseem@cloudwerx.co) has been notified via email"
+          echo "2. Manual review and approval required"
+          echo "3. Choose appropriate backport strategy (cherry-pick or merge)"
+          echo "4. Resolve any conflicts"
+          echo "5. Approve and merge to develop"
+          echo ""
+          echo "This ensures bug fixes are included in future releases"
+          echo "=========================================="
   formal_release_candidate_uat:
     name: Formal Release Candidate to UAT
     runs-on: ubuntu-latest
