@@ -312,110 +312,126 @@ jobs:
           echo "Target branch: develop"
           echo "Release tag: ${{ env.RELEASE_TAG }}"
 
-      - name: Check if develop branch exists
+      - name: Fetch all branches
         run: |
           git fetch origin develop
+          git fetch origin ${{ env.RELEASE_BRANCH }}
+
+      - name: Check if develop branch exists
+        run: |
           if ! git rev-parse --verify origin/develop >/dev/null 2>&1; then
             echo "ERROR: develop branch does not exist"
             exit 1
           fi
           echo "develop branch exists"
 
-      - name: Create Backport Pull Request
-        uses: peter-evans/create-pull-request@v5
-        id: create_pr
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore: Backport bug fixes from ${{ env.RELEASE_BRANCH }} to develop"
-          branch: backport/${{ env.RELEASE_BRANCH }}-to-develop-${{ github.run_number }}
-          base: develop
-          title: "[Backport] Bug fixes from ${{ env.RELEASE_BRANCH }} to develop"
-          body: |
-            ## Automated Backport - Bug Fixes
-            
-            This PR backports bug fixes from the release branch to develop to prevent regression in future releases.
-            
-            ### Details
-            - **Release Branch:** ${{ env.RELEASE_BRANCH }}
-            - **Release Tag:** ${{ env.RELEASE_TAG }}
-            - **Target Branch:** develop
-            - **Trigger:** Bugfix merge detected in release branch
-            - **Automated by:** GitHub Actions CI/CD Pipeline
-            
-            ### Action Required by Release Manager
-            
-            #### 1. Review the Changes
-            - Verify that only bug fixes are included
-            - Check for any conflicts with ongoing development in develop
-            
-            #### 2. Choose Backport Strategy
-            
-            **Option A: Cherry-Pick (Recommended for targeted fixes)**
-            
-            git checkout develop
-            git cherry-pick <commit-hash>
-            git push origin develop
-            
-            - Use this when you want to backport specific commits only
-            - Provides more control over what gets merged
-            - Better for complex release branches with multiple unrelated changes
-            
-            **Option B: Merge Release Branch**
-            
-            git checkout develop
-            git merge ${{ env.RELEASE_BRANCH }}
-            git push origin develop
-            
-            - Use this when branches are closely aligned
-            - Simpler when all changes in release should go to develop
-            - Appropriate when release only contains the bug fixes
-            
-            #### 3. Resolve Conflicts (if any)
-            - Manually resolve any merge conflicts
-            - Test the resolution locally
-            - Ensure MUnit tests pass
-            
-            #### 4. Approve and Merge
-            - After validation, approve this PR
-            - Merge to develop branch
-            
-            ### Why This Matters
-            
-            Backporting bug fixes to develop ensures:
-            - Future releases include the fix
-            - Developers working on develop have the latest corrections
-            - Same bugs do not reappear in next release cycle
-            - Code consistency across branches
-            
-            ### Workflow Information
-            - **Workflow:** Release & UAT Deployment
-            - **Run Number:** ${{ github.run_number }}
-            - **Triggered by:** ${{ github.actor }}
-          labels: |
-            backport
-            bugfix
-            automated
-            requires-review
-          assignees: nazishwaseem-collab
-          delete-branch: true
-
-      - name: Set PR Number
-        if: steps.create_pr.outputs.pull-request-number != ''
+      - name: Install GitHub CLI
         run: |
-          echo "PR_NUMBER=${{ steps.create_pr.outputs.pull-request-number }}" >> $GITHUB_ENV
-          echo "PR_URL=${{ steps.create_pr.outputs.pull-request-url }}" >> $GITHUB_ENV
-          echo "Created PR: #${{ steps.create_pr.outputs.pull-request-number }}"
-          echo "PR URL: ${{ steps.create_pr.outputs.pull-request-url }}"
+          type -p curl >/dev/null || (sudo apt update && sudo apt install curl -y)
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
+
+      - name: Create Pull Request from Release to Develop
+        run: |
+          echo "Creating PR from ${{ env.RELEASE_BRANCH }} to develop"
+          
+          gh pr create \
+            --title "[Backport] Bug fixes from ${{ env.RELEASE_BRANCH }} to develop" \
+            --body "## Automated Backport - Bug Fixes
+
+          This PR backports bug fixes from the release branch to develop to prevent regression in future releases.
+
+          ### Details
+          - **Release Branch:** \`${{ env.RELEASE_BRANCH }}\`
+          - **Release Tag:** \`${{ env.RELEASE_TAG }}\`
+          - **Target Branch:** \`develop\`
+          - **Trigger:** Bugfix merge detected in release branch
+          - **Automated by:** GitHub Actions CI/CD Pipeline
+
+          ### Action Required by Release Manager
+
+          #### 1. Review the Changes
+          - Verify that only bug fixes are included
+          - Check for any conflicts with ongoing development in develop
+
+          #### 2. Choose Backport Strategy
+
+          **Option A: Cherry-Pick (Recommended for targeted fixes)**
+
+              git checkout develop
+              git cherry-pick <commit-hash>
+              git push origin develop
+
+          - Use this when you want to backport specific commits only
+          - Provides more control over what gets merged
+          - Better for complex release branches with multiple unrelated changes
+
+          **Option B: Merge Release Branch**
+
+              git checkout develop
+              git merge ${{ env.RELEASE_BRANCH }}
+              git push origin develop
+
+          - Use this when branches are closely aligned
+          - Simpler when all changes in release should go to develop
+          - Appropriate when release only contains the bug fixes
+
+          #### 3. Resolve Conflicts (if any)
+          - Manually resolve any merge conflicts
+          - Test the resolution locally
+          - Ensure MUnit tests pass
+
+          #### 4. Approve and Merge
+          - After validation, approve this PR
+          - Merge to develop branch
+
+          ### Why This Matters
+
+          Backporting bug fixes to develop ensures:
+          - Future releases include the fix
+          - Developers working on develop have the latest corrections
+          - Same bugs do not reappear in next release cycle
+          - Code consistency across branches
+
+          ### Workflow Information
+          - **Workflow:** Release & UAT Deployment
+          - **Run Number:** ${{ github.run_number }}
+          - **Triggered by:** ${{ github.actor }}" \
+            --base develop \
+            --head ${{ env.RELEASE_BRANCH }} \
+            --label backport \
+            --label bugfix \
+            --label automated \
+            --assignee nazishwaseem-collab
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get PR Number
+        id: get_pr
+        run: |
+          sleep 3
+          PR_NUMBER=$(gh pr list --base develop --head ${{ env.RELEASE_BRANCH }} --json number --jq '.[0].number')
+          PR_URL=$(gh pr list --base develop --head ${{ env.RELEASE_BRANCH }} --json url --jq '.[0].url')
+          echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_ENV
+          echo "PR_URL=${PR_URL}" >> $GITHUB_ENV
+          echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
+          echo "Created PR number: ${PR_NUMBER}"
+          echo "PR URL: ${PR_URL}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Send Email Notification to Release Manager
-        if: steps.create_pr.outputs.pull-request-number != ''
+        if: env.PR_NUMBER != ''
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
           server_port: 587
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "[Action Required] Backport PR Created - ${{ env.RELEASE_BRANCH }} to develop"
+          subject: "[Action Required] Backport PR #${{ env.PR_NUMBER }} Created - ${{ env.RELEASE_BRANCH }} to develop"
           to: nazish.waseem@cloudwerx.co
           from: GitHub Actions <noreply@github.com>
           body: |
@@ -425,6 +441,7 @@ jobs:
             
             PR Details:
             - PR Number: #${{ env.PR_NUMBER }}
+            - PR URL: ${{ env.PR_URL }}
             - Source Branch: ${{ env.RELEASE_BRANCH }}
             - Target Branch: develop
             - Release Tag: ${{ env.RELEASE_TAG }}
@@ -450,19 +467,18 @@ jobs:
           echo "=========================================="
           echo "Release Branch: ${{ env.RELEASE_BRANCH }}"
           echo "Release Tag: ${{ env.RELEASE_TAG }}"
-          echo "Target: develop branch"
+          echo "Source Branch: ${{ env.RELEASE_BRANCH }}"
+          echo "Target Branch: develop"
           if [ -n "${{ env.PR_NUMBER }}" ]; then
             echo "PR Number: #${{ env.PR_NUMBER }}"
             echo "PR URL: ${{ env.PR_URL }}"
-          else
-            echo "Note: No new changes detected or PR already exists"
           fi
           echo ""
           echo "NEXT STEPS:"
           echo "1. Release Manager (nazish.waseem@cloudwerx.co) has been notified via email"
           echo "2. Manual review and approval required"
           echo "3. Choose appropriate backport strategy (cherry-pick or merge)"
-          echo "4. Resolve any conflicts"
+          echo "4. Resolve any conflicts manually"
           echo "5. Approve and merge to develop"
           echo ""
           echo "This ensures bug fixes are included in future releases"
