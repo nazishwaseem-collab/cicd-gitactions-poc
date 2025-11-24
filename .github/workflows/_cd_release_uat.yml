@@ -339,76 +339,82 @@ jobs:
             echo "PR_URL=${PR_URL}" >> $GITHUB_ENV
           else
             echo "Creating new PR..."
-            PR_URL=$(gh pr create \
-              --base develop \
-              --head ${{ env.RELEASE_BRANCH }} \
-              --title "[Backport] Bug fixes from ${{ env.RELEASE_BRANCH }} to develop" \
-              --body "## Automated Backport - Bug Fixes
+            
+            cat > /tmp/pr_body.md << 'EOFMARKER'
+          ## Automated Backport - Bug Fixes
 
-This PR backports bug fixes from the release branch to develop to prevent regression in future releases.
+          This PR backports bug fixes from the release branch to develop to prevent regression in future releases.
 
-### Details
-- **Release Branch:** \`${{ env.RELEASE_BRANCH }}\`
-- **Release Tag:** \`${{ env.RELEASE_TAG }}\`
-- **Target Branch:** \`develop\`
-- **Trigger:** Bugfix merge detected in release branch
-- **Automated by:** GitHub Actions CI/CD Pipeline
+          ### Details
+          - **Release Branch:** RELEASE_BRANCH_PLACEHOLDER
+          - **Release Tag:** RELEASE_TAG_PLACEHOLDER
+          - **Target Branch:** develop
+          - **Trigger:** Bugfix merge detected in release branch
+          - **Automated by:** GitHub Actions CI/CD Pipeline
 
----
+          ---
 
-### Action Required by Release Manager
+          ### Action Required by Release Manager
 
-#### 1. Review the Changes
-- Verify that only bug fixes are included
-- Check for any conflicts with ongoing development in develop
+          #### 1. Review the Changes
+          - Verify that only bug fixes are included
+          - Check for any conflicts with ongoing development in develop
 
-#### 2. Choose Backport Strategy
+          #### 2. Choose Backport Strategy
 
-**Option A: Cherry-Pick (Recommended for targeted fixes)**
-\`\`\`bash
-git checkout develop
-git cherry-pick <commit-hash>
-git push origin develop
-\`\`\`
-- Use this when you want to backport specific commits only
-- Provides more control over what gets merged
-- Better for complex release branches with multiple unrelated changes
+          **Option A: Cherry-Pick (Recommended for targeted fixes)**
 
-**Option B: Merge Release Branch**
-\`\`\`bash
-git checkout develop
-git merge ${{ env.RELEASE_BRANCH }}
-git push origin develop
-\`\`\`
-- Use this when branches are closely aligned
-- Simpler when all changes in release should go to develop
-- Appropriate when release only contains the bug fixes
+              git checkout develop
+              git cherry-pick <commit-hash>
+              git push origin develop
 
-#### 3. Resolve Conflicts (if any)
-- Manually resolve any merge conflicts
-- Test the resolution locally
-- Ensure MUnit tests pass
+          - Use this when you want to backport specific commits only
+          - Provides more control over what gets merged
+          - Better for complex release branches with multiple unrelated changes
 
-#### 4. Approve and Merge
-- After validation, approve this PR
-- Merge to develop branch
+          **Option B: Merge Release Branch**
 
----
+              git checkout develop
+              git merge RELEASE_BRANCH_PLACEHOLDER
+              git push origin develop
 
-### Why This Matters
+          - Use this when branches are closely aligned
+          - Simpler when all changes in release should go to develop
+          - Appropriate when release only contains the bug fixes
 
-Backporting bug fixes to develop ensures:
-- Future releases include the fix
-- Developers working on develop have the latest corrections
-- Same bugs do not reappear in next release cycle
-- Code consistency across branches
+          #### 3. Resolve Conflicts (if any)
+          - Manually resolve any merge conflicts
+          - Test the resolution locally
+          - Ensure MUnit tests pass
 
----
+          #### 4. Approve and Merge
+          - After validation, approve this PR
+          - Merge to develop branch
 
-**Workflow Information**
-- **Run Number:** ${{ github.run_number }}
-- **Triggered by:** ${{ github.actor }}
-- **Workflow:** CD - Release & UAT Deployment")
+          ---
+
+          ### Why This Matters
+
+          Backporting bug fixes to develop ensures:
+          - Future releases include the fix
+          - Developers working on develop have the latest corrections
+          - Same bugs do not reappear in next release cycle
+          - Code consistency across branches
+
+          ---
+
+          **Workflow Information**
+          - **Run Number:** RUN_NUMBER_PLACEHOLDER
+          - **Triggered by:** ACTOR_PLACEHOLDER
+          - **Workflow:** CD - Release & UAT Deployment
+          EOFMARKER
+            
+            sed -i "s|RELEASE_BRANCH_PLACEHOLDER|${{ env.RELEASE_BRANCH }}|g" /tmp/pr_body.md
+            sed -i "s|RELEASE_TAG_PLACEHOLDER|${{ env.RELEASE_TAG }}|g" /tmp/pr_body.md
+            sed -i "s|RUN_NUMBER_PLACEHOLDER|${{ github.run_number }}|g" /tmp/pr_body.md
+            sed -i "s|ACTOR_PLACEHOLDER|${{ github.actor }}|g" /tmp/pr_body.md
+            
+            PR_URL=$(gh pr create --base develop --head ${{ env.RELEASE_BRANCH }} --title "[Backport] Bug fixes from ${{ env.RELEASE_BRANCH }} to develop" --body-file /tmp/pr_body.md)
             
             echo "PR created successfully"
             echo "PR_URL=${PR_URL}" >> $GITHUB_ENV
@@ -500,8 +506,8 @@ Backporting bug fixes to develop ensures:
                       <li><strong>Review the changes</strong> - Verify that only bug fixes are included</li>
                       <li><strong>Choose backport strategy:</strong>
                         <ul>
-                          <li><strong>Cherry-Pick</strong> - For targeted fixes (<code>git cherry-pick &lt;commit-hash&gt;</code>)</li>
-                          <li><strong>Merge</strong> - For aligned branches (<code>git merge ${{ env.RELEASE_BRANCH }}</code>)</li>
+                          <li><strong>Cherry-Pick</strong> - For targeted fixes (git cherry-pick commit-hash)</li>
+                          <li><strong>Merge</strong> - For aligned branches (git merge ${{ env.RELEASE_BRANCH }})</li>
                         </ul>
                       </li>
                       <li><strong>Resolve any conflicts</strong> if present</li>
