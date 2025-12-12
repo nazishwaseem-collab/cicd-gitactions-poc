@@ -376,6 +376,15 @@ jobs:
             target/surefire-reports/
           if-no-files-found: warn
 
+      - name: Debug Maven Configuration
+        run: |
+          echo "Checking artifact exists:"
+          ls -la target/*.jar || echo "No JAR found!"
+          echo "Current POM version:"
+          mvn help:evaluate -Dexpression=project.version -q -DforceStdout
+          echo "Distribution Management:"
+          mvn help:effective-pom | grep -A 10 "distributionManagement"
+
       # Build and Package with encrypted properties
       - name: Build with Maven
         run: |
